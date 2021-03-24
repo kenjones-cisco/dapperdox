@@ -32,10 +32,13 @@ import (
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
+	wraperrors "github.com/pkg/errors"
 	"github.com/serenize/snaker"
 	"github.com/spf13/viper"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/discover"
 	"github.com/kenjones-cisco/dapperdox/formatter"
 )
 
@@ -77,10 +80,14 @@ var sortTypes = map[string]bool{
 }
 
 // APISuite holds multiple apis held by name.
-var APISuite map[string]*APISpecification
+var APISuite = make(map[string]*APISpecification)
 
 // APISuiteGroups holds multiple apis sorted by groups.
-var APISuiteGroups map[string][]*APISpecification
+var APISuiteGroups = make(map[string][]*APISpecification)
+
+// registeredSpecs tracks which API specs have already been registered and added to router.
+// Note: format <service-title>:<version>.
+var registeredSpecs sets.String = sets.NewString() // initialize as package var
 
 // APISpecification holds the content of a parsed api.
 type APISpecification struct {
@@ -240,56 +247,121 @@ func (a SortMethods) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a SortMethods) Less(i, j int) bool { return a[i].SortKey < a[j].SortKey }
 
 // LoadSpecifications loads the provided api specifications.
-func LoadSpecifications() error {
+func LoadSpecifications(d discover.DiscoveryManager) (bool, error) {
 	loadStatusCodes()
 	loadReplacer()
 
-	if APISuite == nil {
-		APISuite = make(map[string]*APISpecification)
-		APISuiteGroups = make(map[string][]*APISpecification)
+	as := make(map[string]*APISpecification)
+	asg := make(map[string][]*APISpecification)
+
+	var (
+		newspecs bool
+		docs     map[string]*loads.Document
+		err      error
+	)
+
+	if viper.GetBool(config.DiscoveryEnabled) {
+		docs, err = getDocsByDiscovery(d)
+	} else {
+		docs, err = getDocsByDir()
 	}
 
-	log().Infof("configured spec filenames: %v", viper.GetStringSlice(config.SpecFilename))
+	if err != nil {
+		return newspecs, err
+	}
 
-	for _, specLocation := range viper.GetStringSlice(config.SpecFilename) {
-		log().Infof("specLocation: %s", specLocation)
-
+	for specLocation, doc := range docs {
 		var (
 			ok            bool
 			specification *APISpecification
 		)
 
-		if specification, ok = APISuite[""]; !ok {
+		if specification, ok = as[""]; !ok {
 			specification = &APISpecification{}
 		}
 
-		if err := specification.load(specLocation); err != nil {
-			return err
+		specification.load(specLocation, doc)
+
+		as[specification.ID] = specification
+
+		if _, exists := asg[specification.GroupBy]; !exists {
+			asg[specification.GroupBy] = make([]*APISpecification, 0)
 		}
 
-		APISuite[specification.ID] = specification
-
-		if _, exists := APISuiteGroups[specification.GroupBy]; !exists {
-			APISuiteGroups[specification.GroupBy] = make([]*APISpecification, 0)
-		}
-
-		APISuiteGroups[specification.GroupBy] = append(APISuiteGroups[specification.GroupBy], specification)
+		asg[specification.GroupBy] = append(asg[specification.GroupBy], specification)
 	}
 
-	return nil
+	log().Infof("loaded [%d] specifications to API spec suite maps", len(as))
+
+	if len(as) > 0 {
+		APISuite = as
+		APISuiteGroups = asg
+
+		newspecs = true
+	}
+
+	return newspecs, nil
 }
 
-func (c *APISpecification) load(specLocation string) error {
-	document, err := loadSpec(normalizeSpecLocation(specLocation))
-	if err != nil {
-		return err
+func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document, error) {
+	if d == nil {
+		return nil, wraperrors.New("no discovery provided to fetch specs")
 	}
 
+	docs := make(map[string]*loads.Document)
+
+	rawspecs := d.Specs()
+
+	for k, data := range rawspecs {
+		document, err := loads.Analyzed(json.RawMessage(data), "")
+		if err != nil {
+			return nil, err
+		}
+
+		document, err = document.Expanded()
+		if err != nil {
+			return nil, err
+		}
+
+		regkey := fmt.Sprintf("%s:%s", k, document.Spec().Info.Version)
+		log().Debugf("  checking if spec[%s] already registered: %v", regkey, registeredSpecs.Has(regkey))
+
+		if !registeredSpecs.Has(regkey) {
+			docs[fmt.Sprintf("/%s/api.json", k)] = document
+
+			log().Debugf("  registering spec[%s]", regkey)
+			registeredSpecs.Insert(regkey)
+		}
+	}
+
+	return docs, nil
+}
+
+func getDocsByDir() (map[string]*loads.Document, error) {
+	log().Infof("configured spec filenames: %v", viper.GetStringSlice(config.SpecFilename))
+
+	docs := make(map[string]*loads.Document)
+
+	for _, specLocation := range viper.GetStringSlice(config.SpecFilename) {
+		log().Infof("specLocation: %s", specLocation)
+
+		document, err := loadSpec(normalizeSpecLocation(specLocation))
+		if err != nil {
+			return nil, err
+		}
+
+		if isLocalSpecURL(specLocation) && !strings.HasPrefix(specLocation, "/") {
+			specLocation = "/" + specLocation
+		}
+
+		docs[specLocation] = document
+	}
+
+	return docs, nil
+}
+
+func (c *APISpecification) load(specLocation string, document *loads.Document) {
 	apispec := document.Spec()
-
-	if isLocalSpecURL(specLocation) && !strings.HasPrefix(specLocation, "/") {
-		specLocation = "/" + specLocation
-	}
 
 	c.URL = specLocation
 
@@ -344,7 +416,7 @@ func (c *APISpecification) load(specLocation string) error {
 
 	if sortByList, ok := apispec.Extensions[sortMethodsByExt].([]interface{}); ok {
 		for _, sortBy := range sortByList {
-			keyname := sortBy.(string)
+			keyname, _ := sortBy.(string)
 			if _, ok := sortTypes[keyname]; !ok {
 				log().Errorf("Error: Invalid x-sortBy value %s", keyname)
 			} else {
@@ -458,8 +530,6 @@ func (c *APISpecification) load(specLocation string) error {
 			c.APIVersions[v] = append(c.APIVersions[v], napi) // Group APIs by version
 		}
 	}
-
-	return nil
 }
 
 func (c *APISpecification) getMethods(tag spec.Tag, api *APIGroup, methods *[]Method, pi *spec.PathItem, path, version string) {
@@ -1016,7 +1086,8 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 // It uses the 'required' map to set when properties are required and builds a JSON
 // representation of the resource.
 func (c *APISpecification) compileproperties(s *spec.Schema, r *Resource, method *Method, id string, required map[string]bool, jsonRep map[string]interface{}, myFQNS []string,
-	chopped, isRequestResource bool) {
+	chopped, isRequestResource bool,
+) {
 	// First, grab the required members
 	for _, n := range s.Required {
 		required[n] = true
@@ -1044,7 +1115,8 @@ func (c *APISpecification) compileproperties(s *spec.Schema, r *Resource, method
 }
 
 func (c *APISpecification) processProperty(s *spec.Schema, name string, r *Resource, method *Method, id string, required map[string]bool, jsonRep map[string]interface{}, myFQNS []string,
-	chopped, isRequestResource bool) {
+	chopped, isRequestResource bool,
+) {
 	newFQNS := prepareNamespace(myFQNS, id, name, chopped)
 
 	var (

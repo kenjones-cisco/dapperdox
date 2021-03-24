@@ -1,19 +1,23 @@
 ## To Do
 
 ### ``.golangci.yml``
-(line 335) (kenjones): refactor code
-
 (line 338) (kenjones): refactor code
 
-(line 339) (kenjones): refactor code
+(line 341) (kenjones): refactor code
 
-(line 341) (kenjones): avoid dynamic errors
+(line 342) (kenjones): refactor code
 
-(line 342) (kenjones): triggers a panic during scan
+(line 344) (kenjones): avoid dynamic errors
 
-(line 343) (kenjones): refactor code
+(line 345) (kenjones): triggers a panic during scan
 
-(line 346) (kenjones): wrap errors
+(line 346) (kenjones): refactor code
+
+(line 350) (kenjones): wrap errors
+
+(line 396) (rigdomin): handler this linter at a later time
+
+(line 402) (rigdomin): fix cyclop issue for [load() 27/20] and [resourceFromSchema() 32/20]
 
 
 ### ``assets/static/js/explorer.js``
@@ -30,6 +34,12 @@
 (line 23) need to expand this if URL matches page -->
 
 
+### ``discover/controller.go``
+(line 194) : finer-grained index (perf)
+
+(line 201) : filtering functions to skip over un-referenced resources (perf)
+
+
 ### ``formatter/markdown.go``
 (line 113) : Clean up and improve this code.
 
@@ -40,18 +50,22 @@
 (line 208) default to latest if version not found, or 404 ?
 
 
-### ``render/asset/asset.go``
-(line 116) this should be applied to files also.
+### ``handlers/router.go``
+(line 60) (): fix registrators memory leak
 
-(line 232) Make this more efficient!
+
+### ``render/asset/asset.go``
+(line 115) this should be applied to files also.
+
+(line 231) Make this more efficient!
 
 
 ### ``render/render.go``
-(line 160) Will be specification specific
+(line 165) Will be specification specific
 
-(line 388) : What is the sensible thing to do here?
+(line 393) : What is the sensible thing to do here?
 
 
 ### ``spec/spec.go``
-(line 646) - Dies if there are no responses...
+(line 716) - Dies if there are no responses...
 

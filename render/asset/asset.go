@@ -27,7 +27,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -122,7 +121,7 @@ func Compile(dir, prefix string) {
 			return nil
 		}
 
-		buf, err := ioutil.ReadFile(path)
+		buf, err := os.ReadFile(path)
 		if err != nil {
 			panic(err)
 		}
