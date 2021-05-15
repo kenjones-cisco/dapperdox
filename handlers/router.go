@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/discover"
 	"github.com/kenjones-cisco/dapperdox/handlers/guides"
 	"github.com/kenjones-cisco/dapperdox/handlers/home"
 	"github.com/kenjones-cisco/dapperdox/handlers/proxy"
@@ -27,6 +28,14 @@ import (
 
 // NewRouterChain creates a router with a chain of middlewares that acts as an http.Handler.
 func NewRouterChain() http.Handler {
+	router := createMiddlewareRouter()
+
+	loadAndRegisterSpecs(router, nil)
+
+	return router
+}
+
+func createMiddlewareRouter() *mux.Router {
 	router := mux.NewRouter()
 	router.Use(
 		handlers.RecoveryHandler(handlers.RecoveryLogger(log.Logger()), handlers.PrintRecoveryStack(true)),
@@ -37,9 +46,13 @@ func NewRouterChain() http.Handler {
 		handlers.CORS(handlers.AllowedOrigins(viper.GetStringSlice(config.AllowOrigin))),
 	)
 
-	specs.Register(router)
+	return router
+}
 
-	if err := spec.LoadSpecifications(); err != nil {
+func loadAndRegisterSpecs(router *mux.Router, d discover.DiscoveryManager) {
+	specs.Register(router, d)
+
+	if err := spec.LoadSpecifications(d); err != nil {
 		log.Logger().Fatalf("Load specification error: %s", err)
 	}
 
@@ -50,8 +63,6 @@ func NewRouterChain() http.Handler {
 	static.Register(router)
 	home.Register(router)
 	proxy.Register(router)
-
-	return router
 }
 
 func withLogger(h http.Handler) http.Handler {

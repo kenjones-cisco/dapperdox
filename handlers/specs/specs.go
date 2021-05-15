@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/discover"
 )
 
 var (
@@ -38,15 +39,28 @@ var (
 )
 
 // Register creates routes for each static resource.
-func Register(r *mux.Router) {
+func Register(r *mux.Router, d discover.DiscoveryManager) {
 	log().Info("Registering specifications")
 
-	if viper.GetString(config.SpecDir) == "" {
-		log().Info("- No local specifications to serve")
+	loadReplacer()
 
-		return
+	if viper.GetBool(config.DiscoveryEnabled) {
+		specMap = loadSpecsByDiscovery(d)
+	} else {
+		specMap = loadSpecsByDir()
 	}
 
+	for k := range specMap {
+		// Replace URLs in document
+		specMap[k] = []byte(specReplacer.Replace(string(specMap[k])))
+
+		r.Path(k).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			serveSpec(w, k)
+		})
+	}
+}
+
+func loadReplacer() {
 	// Build a replacer to search/replace specification URLs
 	if specReplacer == nil {
 		var replacements []string
@@ -64,16 +78,35 @@ func Register(r *mux.Router) {
 
 		specReplacer = strings.NewReplacer(replacements...)
 	}
+}
+
+func loadSpecsByDiscovery(d discover.DiscoveryManager) map[string][]byte {
+	if d == nil {
+		log().Info("- No discovered specificiations to serve")
+
+		return nil
+	}
+
+	return d.Specs()
+}
+
+func loadSpecsByDir() map[string][]byte {
+	if viper.GetString(config.SpecDir) == "" {
+		log().Info("- No local specifications to serve")
+
+		return nil
+	}
 
 	base, err := filepath.Abs(filepath.Clean(viper.GetString(config.SpecDir)))
 	if err != nil {
 		log().Errorf("Error forming specification path: %s", err)
+
+		return nil
 	}
 
 	log().Debugf("- Scanning base directory %s", base)
 
 	base = filepath.ToSlash(base)
-
 	specMap = make(map[string][]byte)
 
 	_ = filepath.Walk(base, func(path string, _ os.FileInfo, _ error) error {
@@ -96,17 +129,12 @@ func Register(r *mux.Router) {
 			log().Tracef("    + File: %s", path)
 
 			specMap[route], _ = ioutil.ReadFile(path)
-
-			// Replace URLs in document
-			specMap[route] = []byte(specReplacer.Replace(string(specMap[route])))
-
-			r.Path(route).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				serveSpec(w, route)
-			})
 		}
 
 		return nil
 	})
+
+	return specMap
 }
 
 func serveSpec(w http.ResponseWriter, resource string) {

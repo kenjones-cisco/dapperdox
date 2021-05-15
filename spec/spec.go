@@ -32,10 +32,12 @@ import (
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
+	wraperrors "github.com/pkg/errors"
 	"github.com/serenize/snaker"
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/discover"
 	"github.com/kenjones-cisco/dapperdox/formatter"
 )
 
@@ -240,7 +242,7 @@ func (a SortMethods) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a SortMethods) Less(i, j int) bool { return a[i].SortKey < a[j].SortKey }
 
 // LoadSpecifications loads the provided api specifications.
-func LoadSpecifications() error {
+func LoadSpecifications(d discover.DiscoveryManager) error {
 	loadStatusCodes()
 	loadReplacer()
 
@@ -249,11 +251,22 @@ func LoadSpecifications() error {
 		APISuiteGroups = make(map[string][]*APISpecification)
 	}
 
-	log().Infof("configured spec filenames: %v", viper.GetStringSlice(config.SpecFilename))
+	var (
+		docs map[string]*loads.Document
+		err  error
+	)
 
-	for _, specLocation := range viper.GetStringSlice(config.SpecFilename) {
-		log().Infof("specLocation: %s", specLocation)
+	if viper.GetBool(config.DiscoveryEnabled) {
+		docs, err = getDocsByDiscovery(d)
+	} else {
+		docs, err = getDocsByDir()
+	}
 
+	if err != nil {
+		return err
+	}
+
+	for specLocation, doc := range docs {
 		var (
 			ok            bool
 			specification *APISpecification
@@ -263,7 +276,7 @@ func LoadSpecifications() error {
 			specification = &APISpecification{}
 		}
 
-		if err := specification.load(specLocation); err != nil {
+		if err := specification.load(specLocation, doc); err != nil {
 			return err
 		}
 
@@ -279,17 +292,57 @@ func LoadSpecifications() error {
 	return nil
 }
 
-func (c *APISpecification) load(specLocation string) error {
-	document, err := loadSpec(normalizeSpecLocation(specLocation))
-	if err != nil {
-		return err
+func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document, error) {
+	if d == nil {
+		return nil, wraperrors.New("no discovery provided to fetch specs")
 	}
 
+	docs := make(map[string]*loads.Document)
+
+	rawspecs := d.Specs()
+
+	for k, data := range rawspecs {
+		document, err := loads.Analyzed(json.RawMessage(data), "")
+		if err != nil {
+			return nil, err
+		}
+
+		document, err = document.Expanded()
+		if err != nil {
+			return nil, err
+		}
+
+		docs[k] = document
+	}
+
+	return docs, nil
+}
+
+func getDocsByDir() (map[string]*loads.Document, error) {
+	log().Infof("configured spec filenames: %v", viper.GetStringSlice(config.SpecFilename))
+
+	docs := make(map[string]*loads.Document)
+
+	for _, specLocation := range viper.GetStringSlice(config.SpecFilename) {
+		log().Infof("specLocation: %s", specLocation)
+
+		document, err := loadSpec(normalizeSpecLocation(specLocation))
+		if err != nil {
+			return nil, err
+		}
+
+		if isLocalSpecURL(specLocation) && !strings.HasPrefix(specLocation, "/") {
+			specLocation = "/" + specLocation
+		}
+
+		docs[specLocation] = document
+	}
+
+	return docs, nil
+}
+
+func (c *APISpecification) load(specLocation string, document *loads.Document) error {
 	apispec := document.Spec()
-
-	if isLocalSpecURL(specLocation) && !strings.HasPrefix(specLocation, "/") {
-		specLocation = "/" + specLocation
-	}
 
 	c.URL = specLocation
 
@@ -344,7 +397,7 @@ func (c *APISpecification) load(specLocation string) error {
 
 	if sortByList, ok := apispec.Extensions[sortMethodsByExt].([]interface{}); ok {
 		for _, sortBy := range sortByList {
-			keyname := sortBy.(string)
+			keyname, _ := sortBy.(string)
 			if _, ok := sortTypes[keyname]; !ok {
 				log().Errorf("Error: Invalid x-sortBy value %s", keyname)
 			} else {

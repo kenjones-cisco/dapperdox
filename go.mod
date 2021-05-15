@@ -6,12 +6,17 @@ require (
 	github.com/go-openapi/loads v0.20.0
 	github.com/go-openapi/spec v0.20.0
 	github.com/go-openapi/swag v0.19.12
+	github.com/google/gofuzz v1.2.0 // indirect
+	github.com/googleapis/gnostic v0.4.0 // indirect
 	github.com/gorilla/handlers v1.5.1
 	github.com/gorilla/mux v1.8.0
+	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79 // indirect
 	github.com/justinas/nosurf v1.1.1
 	github.com/microcosm-cc/bluemonday v1.0.4
 	github.com/onsi/ginkgo v1.14.2 // indirect
 	github.com/onsi/gomega v1.10.4 // indirect
+	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
+	github.com/pkg/errors v0.9.1
 	github.com/russross/blackfriday v1.6.0
 	github.com/serenize/snaker v0.0.0-20171204205717-a683aaf2d516
 	github.com/shurcooL/go v0.0.0-20200502201357-93f07166e636 // indirect
@@ -28,4 +33,9 @@ require (
 	github.com/spf13/viper v1.7.1
 	github.com/unrolled/render v1.0.1
 	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
+	gopkg.in/inf.v0 v0.9.1 // indirect
+	k8s.io/api v0.0.0-20180628040859-072894a440bd
+	k8s.io/apimachinery v0.0.0-20180621070125-103fd098999d
+	k8s.io/client-go v8.0.0+incompatible
+	k8s.io/kube-openapi v0.0.0-20180411164004-f442ecb314a3 // indirect
 )

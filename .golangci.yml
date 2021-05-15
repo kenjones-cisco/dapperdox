@@ -71,6 +71,9 @@ output:
 
 # all available settings of specific linters
 linters-settings:
+  cyclop:
+    # the maximal code complexity to report
+    max-complexity: 20
   depguard:
     list-type: blacklist
     include-go-root: false
@@ -343,6 +346,7 @@ linters:
     - nestif  # TODO(kenjones): refactor code
     - scopelint
     - stylecheck
+    - tagliatelle
     - wrapcheck   # TODO(kenjones): wrap errors
   # disable-all: false
   # presets:
@@ -378,6 +382,23 @@ issues:
         - testpackage
         # - unparam
         # - wsl
+
+    - path: config/configurations.go|main.go
+      text: "forbidden by pattern"
+      linters:
+        - forbidigo
+
+    # TODO(rigdomin): handler this linter at a later time
+    - path: formatter/markdown.go|handlers/reference/reference.go
+      text: "reassigned, but never used afterwards"
+      linters:
+        - wastedassign
+
+    # TODO(rigdomin): fix cyclop issue for [load() 27/20] and [resourceFromSchema() 32/20]
+    - path: spec/spec.go
+      text: "calculated cyclomatic complexity"
+      linters:
+        - cyclop
 
     - path: render/render.go
       linters:
