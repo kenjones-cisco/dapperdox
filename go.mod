@@ -9,7 +9,7 @@ require (
 	github.com/gorilla/handlers v1.5.1
 	github.com/gorilla/mux v1.8.0
 	github.com/justinas/nosurf v1.1.1
-	github.com/microcosm-cc/bluemonday v1.0.4
+	github.com/microcosm-cc/bluemonday v1.0.16
 	github.com/onsi/ginkgo v1.14.2 // indirect
 	github.com/onsi/gomega v1.10.4 // indirect
 	github.com/russross/blackfriday v1.6.0
@@ -27,5 +27,5 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.7.1
 	github.com/unrolled/render v1.0.1
-	golang.org/x/net v0.0.0-20201202161906-c7110b5ffcbb
+	golang.org/x/net v0.0.0-20210614182718-04defd469f4e
 )
