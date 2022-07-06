@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/discover"
 	"github.com/kenjones-cisco/dapperdox/handlers"
 	log "github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/network"
@@ -54,12 +55,32 @@ func main() {
 
 	log.SetLevel(viper.GetString(config.LogLevel))
 
-	chain := handlers.NewRouterChain()
+	var chain http.Handler
 
-	var (
-		listener net.Listener
-		err      error
-	)
+	if viper.GetBool(config.DiscoveryEnabled) {
+		// initialize auto-discovery instance
+		discoverer, err := discover.NewDiscoverer()
+		if err != nil {
+			log.Logger().Warnf("unable to create Discoverer: %v", err)
+
+			discoverer = discover.NewDefaultDiscoverer()
+		}
+
+		// invoke auto-discovery background process
+		go discoverer.Run()
+
+		// initialize updater instance
+		updater := handlers.NewAutoDiscoverUpdater(discoverer)
+		defer updater.Close()
+
+		chain = updater.Router()
+	} else {
+		chain = handlers.NewRouterChain()
+	}
+
+	var listener net.Listener
+
+	var err error
 
 	if viper.GetString(config.TLSCert) != "" && viper.GetString(config.TLSKey) != "" {
 		listener, err = network.NewSecuredListener()

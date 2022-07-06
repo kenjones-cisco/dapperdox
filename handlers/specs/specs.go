@@ -20,7 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package specs
 
 import (
-	"io/ioutil"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/discover"
 )
 
 var (
@@ -38,15 +39,31 @@ var (
 )
 
 // Register creates routes for each static resource.
-func Register(r *mux.Router) {
+func Register(r *mux.Router, d discover.DiscoveryManager) {
 	log().Info("Registering specifications")
 
-	if viper.GetString(config.SpecDir) == "" {
-		log().Info("- No local specifications to serve")
+	loadReplacer()
 
-		return
+	if viper.GetBool(config.DiscoveryEnabled) {
+		specMap = loadSpecsByDiscovery(d)
+	} else {
+		specMap = loadSpecsByDir()
 	}
 
+	for k := range specMap {
+		// capture temporary instance to avoid overwritten values in discovery approach.
+		tmpSpec := specMap[k]
+
+		// Replace URLs in document
+		tmpSpec = []byte(specReplacer.Replace(string(tmpSpec)))
+
+		r.Path(k).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			serveSpec(w, tmpSpec)
+		})
+	}
+}
+
+func loadReplacer() {
 	// Build a replacer to search/replace specification URLs
 	if specReplacer == nil {
 		var replacements []string
@@ -64,16 +81,43 @@ func Register(r *mux.Router) {
 
 		specReplacer = strings.NewReplacer(replacements...)
 	}
+}
+
+func loadSpecsByDiscovery(d discover.DiscoveryManager) map[string][]byte {
+	if d == nil {
+		log().Info("- No discovered specificiations to serve")
+
+		return nil
+	}
+
+	nsMap := make(map[string][]byte)
+
+	for k, spec := range d.Specs() {
+		nsMap[fmt.Sprintf("/%s/api.json", k)] = spec
+	}
+
+	log().Debugf("loaded [%d] specs for download", len(nsMap))
+
+	return nsMap
+}
+
+func loadSpecsByDir() map[string][]byte {
+	if viper.GetString(config.SpecDir) == "" {
+		log().Info("- No local specifications to serve")
+
+		return nil
+	}
 
 	base, err := filepath.Abs(filepath.Clean(viper.GetString(config.SpecDir)))
 	if err != nil {
 		log().Errorf("Error forming specification path: %s", err)
+
+		return nil
 	}
 
 	log().Debugf("- Scanning base directory %s", base)
 
 	base = filepath.ToSlash(base)
-
 	specMap = make(map[string][]byte)
 
 	_ = filepath.Walk(base, func(path string, _ os.FileInfo, _ error) error {
@@ -95,24 +139,18 @@ func Register(r *mux.Router) {
 			log().Debugf("    = URL : %s", route)
 			log().Tracef("    + File: %s", path)
 
-			specMap[route], _ = ioutil.ReadFile(path)
-
-			// Replace URLs in document
-			specMap[route] = []byte(specReplacer.Replace(string(specMap[route])))
-
-			r.Path(route).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				serveSpec(w, route)
-			})
+			specMap[route], _ = os.ReadFile(path)
 		}
 
 		return nil
 	})
+
+	return specMap
 }
 
-func serveSpec(w http.ResponseWriter, resource string) {
-	log().Debugf("Serve file %s", resource)
+func serveSpec(w http.ResponseWriter, spec []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-control", "public, max-age=259200")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(specMap[resource])
+	_, _ = w.Write(spec)
 }
