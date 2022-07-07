@@ -244,21 +244,19 @@ func highlightDiff(src []byte) ([]byte, bool) {
 				}
 
 				beginOffsetLeft := lineStarts[lastDel]
-				endOffsetLeft := lineStarts[lastIns]
 				beginOffsetRight := lineStarts[lastIns]
-				endOffsetRight := lineStarts[lineIndex]
 
 				anns = append(anns,
 					&annotate.Annotation{
 						Start:     beginOffsetLeft,
-						End:       endOffsetLeft,
+						End:       lineStarts[lastIns],
 						Left:      []byte(`<span class="gd input-block">`),
 						Right:     []byte(`</span>`),
 						WantInner: 0,
 					},
 					&annotate.Annotation{
 						Start:     beginOffsetRight,
-						End:       endOffsetRight,
+						End:       lineStarts[lineIndex],
 						Left:      []byte(`<span class="gi input-block">`),
 						Right:     []byte(`</span>`),
 						WantInner: 0,

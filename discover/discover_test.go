@@ -23,12 +23,12 @@ func TestNewDiscoverer(t *testing.T) {
 
 	defer func() {
 		for k, v := range existingEnv {
-			_ = os.Setenv(k, v)
+			t.Setenv(k, v)
 		}
 	}()
 
-	_ = os.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
-	_ = os.Setenv("KUBERNETES_SERVICE_PORT", "8080")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "8080")
 
 	copyKubeToken()
 	copyKubeCert()

@@ -113,10 +113,21 @@ linters-settings:
     lines: 100
     statements: 60
   gci:
-    # put imports beginning with prefix after 3rd-party packages;
-    # only support one prefix
-    # if not set, use goimports.local-prefixes
-    local-prefixes: github.com/kenjones-cisco/dapperdox
+    # Section configuration to compare against.
+    # Section names are case-insensitive and may contain parameters in ().
+    # Default: ["standard", "default"]
+    sections:
+      - standard                       # Captures all standard packages if they do not match another section.
+      # - newLine                        # Prints an empty line
+      - default                        # Contains all imports that could not be matched to another section type.
+      # - newLine                        # Prints an empty line
+      - prefix(github.com/kenjones-cisco/dapperdox) # Groups all imports with the specified Prefix.
+
+    # Separators that should be present between sections.
+    # Default: ["newLine"]
+    section-separators:
+      - newLine
+
   gocognit:
     # minimal code complexity to report, 30 by default (but we recommend 10-20)
     min-complexity: 20
@@ -332,9 +343,9 @@ linters:
   #   - govet
   enable-all: true
   disable:
-    # - errorlint
-    # - exhaustive
     - exhaustivestruct
+    - exhaustruct
+    - forcetypeassert
     - funlen    # TODO(kenjones): refactor code
     - gochecknoglobals
     - gochecknoinits
@@ -343,10 +354,12 @@ linters:
     - godox
     - goerr113  # TODO(kenjones): avoid dynamic errors
     - gosec   # TODO(kenjones): triggers a panic during scan
+    - ireturn
     - nestif  # TODO(kenjones): refactor code
     - scopelint
     - stylecheck
     - tagliatelle
+    - varnamelen
     - wrapcheck   # TODO(kenjones): wrap errors
   # disable-all: false
   # presets:
@@ -369,19 +382,11 @@ issues:
     - path: _test\.go
       linters:
         - dupl
-        # - funlen
-        # - gocognit
-        # - goconst
-        # - gocyclo
-        # - goerr113
-        # - gosec
-        # - lll
-        # - nlreturn
+        - ifshort
+        - maintidx
         - paralleltest
         - scopelint
         - testpackage
-        # - unparam
-        # - wsl
 
     - path: config/configurations.go|main.go
       text: "forbidden by pattern"
