@@ -35,7 +35,6 @@ import (
 	wraperrors "github.com/pkg/errors"
 	"github.com/serenize/snaker"
 	"github.com/spf13/viper"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover"
@@ -84,10 +83,6 @@ var APISuite = make(map[string]*APISpecification)
 
 // APISuiteGroups holds multiple apis sorted by groups.
 var APISuiteGroups = make(map[string][]*APISpecification)
-
-// registeredSpecs tracks which API specs have already been registered and added to router.
-// Note: format <service-title>:<version>.
-var registeredSpecs sets.String = sets.NewString() // initialize as package var
 
 // APISpecification holds the content of a parsed api.
 type APISpecification struct {
@@ -323,15 +318,8 @@ func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document
 			return nil, err
 		}
 
-		regkey := fmt.Sprintf("%s:%s", k, document.Spec().Info.Version)
-		log().Debugf("  checking if spec[%s] already registered: %v", regkey, registeredSpecs.Has(regkey))
-
-		if !registeredSpecs.Has(regkey) {
-			docs[fmt.Sprintf("/%s/api.json", k)] = document
-
-			log().Debugf("  registering spec[%s]", regkey)
-			registeredSpecs.Insert(regkey)
-		}
+		log().Debugf("  registering spec[%s]", fmt.Sprintf("%s:%s", k, document.Spec().Info.Version))
+		docs[fmt.Sprintf("/%s/api.json", k)] = document
 	}
 
 	return docs, nil

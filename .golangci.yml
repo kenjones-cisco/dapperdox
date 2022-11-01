@@ -343,6 +343,7 @@ linters:
   #   - govet
   enable-all: true
   disable:
+    - bodyclose # disabled because of go1.18
     - exhaustivestruct
     - exhaustruct
     - forcetypeassert
@@ -353,13 +354,24 @@ linters:
     - gocyclo   # TODO(kenjones): refactor code
     - godox
     - goerr113  # TODO(kenjones): avoid dynamic errors
+    - golint  # deprecated
     - gosec   # TODO(kenjones): triggers a panic during scan
+    - interfacer  # deprecated
     - ireturn
+    - maligned  # deprecated
     - nestif  # TODO(kenjones): refactor code
+    - nilerr # disabled because of go1.18
+    - noctx # disabled because of go1.18
+    - rowserrcheck # disabled because of go1.18
     - scopelint
+    - sqlclosecheck # disabled because of go1.18
+    - structcheck # disabled because of go1.18
     - stylecheck
     - tagliatelle
+    - tparallel # disabled because of go1.18
+    - unparam # disabled because of go1.18
     - varnamelen
+    - wastedassign # disabled because of go1.18
     - wrapcheck   # TODO(kenjones): wrap errors
   # disable-all: false
   # presets:
