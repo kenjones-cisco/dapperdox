@@ -9,7 +9,6 @@ import (
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover"
-	log "github.com/kenjones-cisco/dapperdox/logger"
 )
 
 // Updater periodically refreshes API documentation from discovered specs.
@@ -34,10 +33,6 @@ func NewAutoDiscoverUpdater(discoverer discover.DiscoveryManager) *Updater {
 		ticker: time.NewTicker(viper.GetDuration(config.DiscoveryPeriodTime)),
 		done:   make(chan bool),
 	}
-
-	log.Logger().Info("Loading specifications on startup")
-	// load the specs on startup
-	updater.update()
 
 	// initiate periodic spec updater to fetch latest discovered API specs and generate API documentation
 	go func(u *Updater) {

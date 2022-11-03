@@ -141,8 +141,8 @@ func initialize() {
 	viper.SetDefault(DiscoveryInterval, "10s")
 	viper.SetDefault(DiscoveryInitialDelay, "1s")
 	viper.SetDefault(DiscoveryMaxDelay, "10s")
-	viper.SetDefault(DiscoverySpecLoadTimeout, "1s")
-	viper.SetDefault(DiscoveryPeriodTime, "5m")
+	viper.SetDefault(DiscoverySpecLoadTimeout, "5s")
+	viper.SetDefault(DiscoveryPeriodTime, "30s")
 
 	_ = viper.BindEnv(cfgDirKey, "CONFIG_DIR")
 	_ = viper.BindEnv(LogLevel, "LOGLEVEL")
