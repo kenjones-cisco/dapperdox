@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"time"
 
@@ -45,6 +46,8 @@ func createMiddlewareRouter() *mux.Router {
 		injectHeaders,
 		handlers.CORS(handlers.AllowedOrigins(viper.GetStringSlice(config.AllowOrigin))),
 	)
+
+	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
 
 	return router
 }
