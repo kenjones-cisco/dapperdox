@@ -13,25 +13,6 @@ mode=count
 results=test.out
 
 
-generate_cover_data() {
-    for pkg in $(go list ./...);
-    do
-        for subpkg in $(go list "${pkg}");
-        do
-            f="$workdir/$(echo "$subpkg" | tr / -).cover"
-            go test -v -covermode="$mode" -coverprofile="$f" "$subpkg" >> "$results"
-        done
-    done
-
-    set -- "$workdir"/*.cover
-    if [ ! -f "$1" ]; then
-        rm -f "$results" || :
-        echo "No Test Cases"; exit 0
-    fi
-    echo "mode: $mode" >"$profile"
-    grep -h -v "^mode:" "$workdir"/*.cover >>"$profile"
-}
-
 show_html_report() {
     go tool cover -html="$profile" -o="$workdir"/coverage.html
 }
@@ -54,13 +35,14 @@ _done() {
 trap "_done" EXIT
 
 rm -f "$results"
-generate_cover_data
 
 
 case "$1" in
 "")
+    gotestsum --no-color=false --junitfile test.xml -- -covermode="$mode" -coverprofile="$profile" ./... > "$results"
     show_html_report ;;
 --ci)
+    gotestsum --junitfile test.xml -- -covermode="$mode" -coverprofile="$profile" ./... > "$results"
     show_ci_report ;;
 *)
     echo >&2 "error: invalid option: $1"; exit 1 ;;

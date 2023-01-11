@@ -5,7 +5,7 @@ set -o pipefail
 
 case "$1" in
 "")
-    golangci-lint -v run --print-resources-usage -c .golangci.yml --fix
+    golangci-lint -v run --color=always --print-resources-usage -c .golangci.yml --fix
     ;;
 --ci)
     golangci-lint -v run --print-resources-usage -c .golangci.yml

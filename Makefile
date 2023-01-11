@@ -5,7 +5,7 @@ SHELL := /bin/bash
 
 include Makefile.variables
 
-.PHONY: help clean veryclean build vendor format check test cover docs adhoc xcompile
+.PHONY: help clean veryclean build vendor format check test race cover docs adhoc xcompile
 
 ## display this help message
 help:
@@ -112,6 +112,10 @@ endif
 ## Run tests on project.
 test: check
 	${DOCKERRUN} bash ./scripts/test.sh
+
+## Run tests on project with race condition detector enabled.
+race: check
+	${DOCKERRUN} bash ./scripts/test.sh --race
 
 ## Run tests and capture code coverage metrics on project.
 cover: check
