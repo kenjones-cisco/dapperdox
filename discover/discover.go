@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/spf13/viper"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover/models"
@@ -20,11 +19,12 @@ type Discoverer struct {
 	stop chan struct{}
 
 	specs map[string][]byte
+
+	notify func()
 }
 
 type state struct {
-	services    *models.ServiceMap
-	deployments *models.DeploymentMap
+	services models.ServiceMap
 }
 
 // NewDiscoverer configures a new instance of a Discoverer using Kubernetes client.
@@ -36,28 +36,25 @@ func NewDiscoverer() (DiscoveryManager, error) {
 		return nil, err
 	}
 
-	ctlg := newCatalog(client, catalogOptions{
+	options := catalogOptions{
 		DomainSuffix:     viper.GetString(config.DiscoverySuffix),
 		WatchedNamespace: viper.GetString(config.DiscoveryNamespace),
 		ResyncPeriod:     viper.GetDuration(config.DiscoveryInterval),
-	})
-
-	sm := models.NewServiceMap()
-	dm := models.NewDeploymentMap()
+	}
 
 	d := &Discoverer{
-		services: ctlg,
+		services: newCatalog(client, options),
 		data: &state{
-			services:    &sm,
-			deployments: &dm,
+			services: models.NewServiceMap(),
 		},
-		stop:  make(chan struct{}),
-		specs: make(map[string][]byte),
+		stop:   make(chan struct{}),
+		specs:  make(map[string][]byte),
+		notify: func() {},
 	}
 
 	// register handlers; ignore errors as it will always return nil
-	ctlg.AppendServiceHandler(d.updateServices)
-	ctlg.AppendDeploymentHandler(d.updateDeployments)
+	d.services.AppendServiceHandler(d.updateServices)
+	d.services.AppendDeploymentHandler(d.updateDeployments)
 
 	return d, nil
 }
@@ -70,11 +67,16 @@ func (d *Discoverer) Shutdown() {
 
 // Run starts the discovery process.
 func (d *Discoverer) Run() {
-	d.discover()
+	log().Info("starting discovery process")
 
-	if d.services != nil {
-		go d.services.Run(d.stop)
-	}
+	go d.services.Run(d.stop)
+
+	d.discover()
+}
+
+// RegisterOnChangeFunc provides a way to notifier a consumer of the Specs that data has changed instead of constantly checking.
+func (d *Discoverer) RegisterOnChangeFunc(f func()) {
+	d.notify = f
 }
 
 // Specs returns discovered API specs.
@@ -103,13 +105,15 @@ func (d *Discoverer) discover() {
 
 	// update local cache with latest service specs
 	d.specs = specs
+
+	d.notify()
 }
 
 func (d *Discoverer) updateServices(s *models.Service, e models.Event) {
 	log().Debugf("(Discover Handler) Service: %v Event: %v", s, e)
 
-	if sets.NewString(viper.GetStringSlice(config.DiscoveryServiceIgnoreList)...).Has(s.Hostname) {
-		log().Debugf("%v service is ignored", s.Hostname)
+	if isIgnoredSvc(s.Hostname) {
+		log().Debugf("(Discover Handler) skipping service is part of ignore list : %s", s.Hostname)
 
 		return
 	}
@@ -125,13 +129,13 @@ func (d *Discoverer) updateServices(s *models.Service, e models.Event) {
 }
 
 func (d *Discoverer) updateDeployments(dpl *models.Deployment, e models.Event) {
-	log().Debugf("(Discover Handler) Deployment: %v Event: %v", dpl, e)
+	log().Debugf("(Discover Handler) Deployment: %v Event: %v", *dpl, e)
 
-	switch e {
-	case models.EventAdd, models.EventUpdate:
-		d.data.deployments.Insert(dpl)
-	case models.EventDelete:
-		d.data.deployments.Delete(dpl)
+	if isIgnoredSvc(dpl.Name) {
+		// if the deployment that triggered the update is on the ignore list; return
+		log().Debugf("(Discover Handler) skipping deployment that is part of ignore list : %+v", *dpl)
+
+		return
 	}
 
 	d.discover()

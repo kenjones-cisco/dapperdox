@@ -12,6 +12,7 @@ import (
 type fakeDiscover struct {
 	t *testing.T
 
+	testName  string
 	sPaths    map[string]string
 	wantSpecs map[string][]byte
 	wantErr   bool
@@ -32,7 +33,7 @@ func (fd *fakeDiscover) Specs() map[string][]byte {
 		want := fd.wantSpecs[k]
 
 		if res := bytes.Compare(got, want); res != 0 && !fd.wantErr {
-			fd.t.Errorf("Specs()\n\tgot=%s\n\twant=%s", string(got), string(want))
+			fd.t.Errorf("%s -- Specs()\n\tgot=%s\n\twant=%s", fd.testName, string(got), string(want))
 
 			return nil
 		}
@@ -40,6 +41,8 @@ func (fd *fakeDiscover) Specs() map[string][]byte {
 
 	return specs
 }
+
+func (fd *fakeDiscover) RegisterOnChangeFunc(f func()) {}
 
 // specToByteSlice opens a test spec at a provided file-path and converts into a byte slice.
 func specToByteSlice(specLoc string) []byte {

@@ -57,7 +57,7 @@ func Test_fetchAPISpecs(t *testing.T) {
 			},
 			args: args{
 				host:       swag.String(""),
-				servicemap: testServiceMap,
+				servicemap: &testServiceMap,
 				spec:       "",
 			},
 			want: 0,
@@ -70,7 +70,7 @@ func Test_fetchAPISpecs(t *testing.T) {
 			},
 			args: args{
 				host:       swag.String(""),
-				servicemap: ignoredServiceMap,
+				servicemap: &ignoredServiceMap,
 				spec:       "",
 			},
 			want: 0,
@@ -207,7 +207,7 @@ func Test_fetchAPISpecs(t *testing.T) {
 		// instantiate a new discoverer instance with servicemap
 		d := &Discoverer{
 			data: &state{
-				services: &svcMap,
+				services: svcMap,
 			},
 			services: &fakeController{},
 		}

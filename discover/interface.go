@@ -8,4 +8,6 @@ type DiscoveryManager interface {
 	Run()
 	// Specs returns the cached instances of discovered specs.
 	Specs() map[string][]byte
+	// RegisterOnChangeFunc provides a way to notifier a consumer of the Specs that data has changed instead of constantly checking
+	RegisterOnChangeFunc(f func())
 }

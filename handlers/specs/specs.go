@@ -33,16 +33,15 @@ import (
 	"github.com/kenjones-cisco/dapperdox/discover"
 )
 
-var (
-	specMap      map[string][]byte
-	specReplacer *strings.Replacer
-)
+var specReplacer *strings.Replacer
 
 // Register creates routes for each static resource.
 func Register(r *mux.Router, d discover.DiscoveryManager) {
 	log().Info("Registering specifications")
 
 	loadReplacer()
+
+	var specMap map[string][]byte
 
 	if viper.GetBool(config.DiscoveryEnabled) {
 		specMap = loadSpecsByDiscovery(d)
@@ -58,7 +57,10 @@ func Register(r *mux.Router, d discover.DiscoveryManager) {
 		tmpSpec = []byte(specReplacer.Replace(string(tmpSpec)))
 
 		r.Path(k).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			serveSpec(w, tmpSpec)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-control", "public, max-age=259200")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(tmpSpec)
 		})
 	}
 }
@@ -118,7 +120,7 @@ func loadSpecsByDir() map[string][]byte {
 	log().Debugf("- Scanning base directory %s", base)
 
 	base = filepath.ToSlash(base)
-	specMap = make(map[string][]byte)
+	specMap := make(map[string][]byte)
 
 	_ = filepath.Walk(base, func(path string, _ os.FileInfo, _ error) error {
 		if path == base {
@@ -146,11 +148,4 @@ func loadSpecsByDir() map[string][]byte {
 	})
 
 	return specMap
-}
-
-func serveSpec(w http.ResponseWriter, spec []byte) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-control", "public, max-age=259200")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(spec)
 }

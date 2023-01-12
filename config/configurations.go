@@ -47,7 +47,6 @@ const (
 	DiscoverySuffix             = "discovery.suffix"
 	DiscoveryInterval           = "discovery.interval"
 	DiscoveryInitialDelay       = "discovery.delay.initial"
-	DiscoveryMaxDelay           = "discovery.delay.max"
 	DiscoverySpecLoadTimeout    = "discovery.spec.timeout"
 	DiscoveryPeriodTime         = "discovery.periodtime"
 	DiscoveryServiceIgnoreList  = "discovery.ignorelist.services"
@@ -139,8 +138,7 @@ func initialize() {
 	viper.SetDefault(DiscoveryNamespace, "default")
 	viper.SetDefault(DiscoverySuffix, "cluster.local")
 	viper.SetDefault(DiscoveryInterval, "10s")
-	viper.SetDefault(DiscoveryInitialDelay, "1s")
-	viper.SetDefault(DiscoveryMaxDelay, "10s")
+	viper.SetDefault(DiscoveryInitialDelay, "5s")
 	viper.SetDefault(DiscoverySpecLoadTimeout, "5s")
 	viper.SetDefault(DiscoveryPeriodTime, "30s")
 

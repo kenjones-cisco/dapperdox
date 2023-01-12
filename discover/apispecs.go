@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag"
 	wraperrors "github.com/pkg/errors"
 	"github.com/spf13/viper"
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 )
@@ -33,7 +33,7 @@ func (d *Discoverer) fetchAPISpecs() map[string][]byte {
 	newSpecs := make(map[string][]byte)
 
 	for _, service := range d.data.services.List() {
-		if service.Hostname == "" || sets.NewString(viper.GetStringSlice(config.DiscoveryServiceIgnoreList)...).Has(service.Hostname) {
+		if service.Hostname == "" || isIgnoredSvc(service.Hostname) {
 			log().Warnf("invalid service %q", service.Hostname)
 
 			continue
@@ -255,6 +255,16 @@ func applyRewrites(rewrites, svcSpec *spec.Swagger) {
 func isPrivate(exts spec.Extensions) bool {
 	if pv, ok := exts.GetString(extKeyVisibility); ok {
 		return pv == "private"
+	}
+
+	return false
+}
+
+func isIgnoredSvc(name string) bool {
+	for _, ignore := range viper.GetStringSlice(config.DiscoveryServiceIgnoreList) {
+		if strings.HasPrefix(name, ignore) {
+			return true
+		}
 	}
 
 	return false

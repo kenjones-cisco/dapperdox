@@ -19,7 +19,8 @@ type Updater struct {
 	ticker *time.Ticker
 	done   chan bool
 
-	closed bool
+	closed   bool
+	notified bool
 }
 
 // NewAutoDiscoverUpdater creates a new Updater instance with AutoDiscovery background process.
@@ -28,11 +29,18 @@ func NewAutoDiscoverUpdater(discoverer discover.DiscoveryManager) *Updater {
 
 	// create updater instance to periodically fetch the latest auto-discovered specs
 	updater := &Updater{
-		d:      discoverer,
-		r:      router,
-		ticker: time.NewTicker(viper.GetDuration(config.DiscoveryPeriodTime)),
-		done:   make(chan bool),
+		d:        discoverer,
+		r:        router,
+		ticker:   time.NewTicker(viper.GetDuration(config.DiscoveryPeriodTime)),
+		done:     make(chan bool),
+		notified: true,
 	}
+
+	// register the an OnChange function to know when the available discovery data has been changed
+	discoverer.RegisterOnChangeFunc(updater.onChange)
+
+	// wait a short configured period of time and then
+	time.AfterFunc(viper.GetDuration(config.DiscoveryInitialDelay), updater.update)
 
 	// initiate periodic spec updater to fetch latest discovered API specs and generate API documentation
 	go func(u *Updater) {
@@ -68,6 +76,15 @@ func (u *Updater) Close() {
 	u.closed = true
 }
 
+func (u *Updater) onChange() {
+	u.notified = true
+}
+
 func (u *Updater) update() {
+	if !u.notified {
+		return
+	}
+
 	loadAndRegisterSpecs(u.r, u.d)
+	u.notified = false
 }

@@ -110,12 +110,9 @@ var testIgnoredServices = []*models.Service{
 }
 
 var (
-	sm                = models.NewServiceMap(testServices...)
-	testServiceMap    = &sm
-	sm2               = models.NewServiceMap()
-	emptyServiceMap   = &sm2
-	sm3               = models.NewServiceMap(testIgnoredServices...)
-	ignoredServiceMap = &sm3
+	testServiceMap    = models.NewServiceMap(testServices...)
+	emptyServiceMap   = models.NewServiceMap()
+	ignoredServiceMap = models.NewServiceMap(testIgnoredServices...)
 )
 
 var testDeployments = []*models.Deployment{
@@ -150,11 +147,6 @@ var testDeployments = []*models.Deployment{
 		Version:           "9",
 	},
 }
-
-var (
-	dm                 = models.NewDeploymentMap()
-	emptyDeploymentMap = &dm
-)
 
 type fakeController struct {
 	wantErr bool

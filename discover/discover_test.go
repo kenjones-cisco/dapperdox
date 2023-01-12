@@ -43,18 +43,6 @@ func TestNewDiscoverer(t *testing.T) {
 	}
 }
 
-func TestDiscoverer_run_nil_service(t *testing.T) {
-	d := &Discoverer{data: &state{services: emptyServiceMap}, services: nil, stop: make(chan struct{})}
-	go d.Run()
-
-	var once sync.Once
-
-	once.Do(func() {
-		time.Sleep(100 * time.Millisecond)
-		d.Shutdown()
-	})
-}
-
 func TestDiscoverer_run_fake_service(t *testing.T) {
 	d := &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 	go d.Run()
@@ -115,7 +103,7 @@ func TestDiscoverer_updateServices(t *testing.T) {
 
 func TestDiscoverer_updateDeployments(t *testing.T) {
 	// handle the initial run and run where data does not change
-	d := &Discoverer{data: &state{services: emptyServiceMap, deployments: emptyDeploymentMap}, services: &fakeController{}, stop: make(chan struct{})}
+	d := &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 
 	type args struct {
 		dpl *models.Deployment
@@ -147,14 +135,14 @@ func TestDiscoverer_updateDeployments(t *testing.T) {
 	}
 
 	// trigger failure within discover()
-	d = &Discoverer{data: &state{services: emptyServiceMap, deployments: emptyDeploymentMap}, services: &fakeController{}, stop: make(chan struct{})}
+	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 	d.updateDeployments(testDeployments[0], models.EventAdd)
 
 	// trigger failure from services call
-	d = &Discoverer{data: &state{services: emptyServiceMap, deployments: emptyDeploymentMap}, services: &fakeController{wantErr: true, wantNil: false}, stop: make(chan struct{})}
+	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{wantErr: true, wantNil: false}, stop: make(chan struct{})}
 	d.updateDeployments(testDeployments[0], models.EventAdd)
 
 	// trigger no data from services call
-	d = &Discoverer{data: &state{services: emptyServiceMap, deployments: emptyDeploymentMap}, services: &fakeController{wantErr: false, wantNil: true}, stop: make(chan struct{})}
+	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{wantErr: false, wantNil: true}, stop: make(chan struct{})}
 	d.updateDeployments(testDeployments[0], models.EventAdd)
 }
