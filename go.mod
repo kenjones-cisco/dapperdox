@@ -24,7 +24,7 @@ require (
 	github.com/unrolled/render v1.0.1
 	golang.org/x/net v0.0.0-20210614182718-04defd469f4e
 	k8s.io/api v0.0.0-20180628040859-072894a440bd
-	k8s.io/apimachinery v0.0.0-20180621070125-103fd098999d
+	k8s.io/apimachinery v0.15.7
 	k8s.io/client-go v8.0.0+incompatible
 )
 
@@ -36,7 +36,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/felixge/httpsnoop v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
-	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-openapi/analysis v0.19.16 // indirect
 	github.com/go-openapi/errors v0.19.9 // indirect
 	github.com/go-openapi/jsonpointer v0.19.5 // indirect
@@ -47,6 +46,7 @@ require (
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
 	github.com/golang/protobuf v1.4.2 // indirect
 	github.com/google/btree v1.0.0 // indirect
+	github.com/google/go-cmp v0.5.2 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/googleapis/gnostic v0.4.0 // indirect
 	github.com/gorilla/css v1.0.0 // indirect
@@ -80,5 +80,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.51.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	k8s.io/kube-openapi v0.0.0-20180411164004-f442ecb314a3 // indirect
+	k8s.io/klog v0.3.1 // indirect
+	k8s.io/kube-openapi v0.0.0-20190228160746-b3a7cee44a30 // indirect
+	sigs.k8s.io/yaml v1.1.0 // indirect
 )
