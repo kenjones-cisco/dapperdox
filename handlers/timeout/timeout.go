@@ -15,10 +15,9 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
-// Package timeout implements a timeoutHandler
-
 // Mostly borrowed from core net/http.
 
+// Package timeout implements a timeoutHandler.
 package timeout
 
 import (

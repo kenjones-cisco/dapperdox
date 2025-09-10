@@ -18,7 +18,7 @@ fi
 # it's explicitly enabled by setting the --no-color flag to false (yuck, a double negative).
 case "$1" in
 "")
-    gotestsum --no-color=false -- "${pkgs[@]}" -bench . "${options[@]}"
+    gotestsum --no-color=false -- "${pkgs[@]}" -benchmem -bench . "${options[@]}"
     ;;
 --race)
     # Race condition detector has libc dependencies, and requires CGO.
@@ -26,7 +26,7 @@ case "$1" in
     # https://github.com/golang/go/issues/9918
     # https://github.com/golang/go/issues/6508
     # https://github.com/golang/go/issues/27089
-    CGO_ENABLED=1 gotestsum --no-color=false -- "${pkgs[@]}" -bench . "${options[@]}" -race
+    CGO_ENABLED=1 gotestsum --no-color=false -- "${pkgs[@]}" -benchmem -bench . "${options[@]}" -race
     ;;
 *)
     echo >&2 "error: invalid option: $1"; exit 1 ;;

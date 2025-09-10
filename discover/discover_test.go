@@ -43,7 +43,7 @@ func TestNewDiscoverer(t *testing.T) {
 	}
 }
 
-func TestDiscoverer_run_fake_service(t *testing.T) {
+func TestDiscoverer_run_fake_service(_ *testing.T) {
 	d := &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 	go d.Run()
 
@@ -83,7 +83,7 @@ func TestDiscoverer_updateServices(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(_ *testing.T) {
 			d.updateServices(tt.args.s, tt.args.e)
 		})
 	}
@@ -93,11 +93,11 @@ func TestDiscoverer_updateServices(t *testing.T) {
 	d.updateServices(testServices[0], models.EventAdd)
 
 	// trigger failure from services call
-	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{wantErr: true, wantNil: false}, stop: make(chan struct{})}
+	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 	d.updateServices(testServices[0], models.EventAdd)
 
 	// trigger no data from services call
-	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{wantErr: false, wantNil: true}, stop: make(chan struct{})}
+	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 	d.updateServices(testServices[0], models.EventAdd)
 }
 
@@ -129,7 +129,7 @@ func TestDiscoverer_updateDeployments(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(_ *testing.T) {
 			d.updateDeployments(tt.args.dpl, tt.args.e)
 		})
 	}
@@ -139,10 +139,10 @@ func TestDiscoverer_updateDeployments(t *testing.T) {
 	d.updateDeployments(testDeployments[0], models.EventAdd)
 
 	// trigger failure from services call
-	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{wantErr: true, wantNil: false}, stop: make(chan struct{})}
+	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 	d.updateDeployments(testDeployments[0], models.EventAdd)
 
 	// trigger no data from services call
-	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{wantErr: false, wantNil: true}, stop: make(chan struct{})}
+	d = &Discoverer{data: &state{services: emptyServiceMap}, services: &fakeController{}, stop: make(chan struct{})}
 	d.updateDeployments(testDeployments[0], models.EventAdd)
 }

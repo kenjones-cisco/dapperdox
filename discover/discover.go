@@ -1,3 +1,4 @@
+// Package discover provides a mechanism for discovering runnings services within kubernetes and the API specs for each service so that documentation can be generated for those running services.
 package discover
 
 import (
@@ -12,15 +13,11 @@ import (
 // Discoverer represents the state of the discovery mechanism.
 type Discoverer struct {
 	services watcher
-
-	sLock sync.Mutex
-
-	data *state
-	stop chan struct{}
-
-	specs map[string][]byte
-
-	notify func()
+	data     *state
+	stop     chan struct{}
+	specs    map[string][]byte
+	notify   func()
+	sLock    sync.Mutex
 }
 
 type state struct {

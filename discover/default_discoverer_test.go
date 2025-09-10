@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func Test_defaultdiscoverer_Run(t *testing.T) {
+func Test_defaultdiscoverer_Run(_ *testing.T) {
 	d := NewDefaultDiscoverer()
 
 	d.Run()

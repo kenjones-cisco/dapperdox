@@ -158,7 +158,7 @@ func buildNavigation(nav *navigation.Node, path, pathBase, route, ext string) {
 	hierarchy := asset.MetaData(path, "Navigation")
 	sortOrder := asset.MetaData(path, "SortOrder")
 
-	if len(hierarchy) > 0 {
+	if hierarchy != "" {
 		log().Tracef("      * Got navigation metadata %s for file %s", hierarchy, path)
 	} else {
 		// No Meta Data set on guide, so use the directory structure

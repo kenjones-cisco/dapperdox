@@ -144,9 +144,9 @@ func Test_convertDeployment(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
 		args args
 		want *models.Deployment
+		name string
 	}{
 		{
 			name: "success - populated k8s Deployment converts to Deployment",

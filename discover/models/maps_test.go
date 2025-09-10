@@ -44,9 +44,9 @@ func TestNewServiceMap(t *testing.T) {
 	}
 
 	tests := []struct {
+		want ServiceMap
 		name string
 		args args
-		want ServiceMap
 	}{
 		{
 			name: "empty map",
@@ -121,6 +121,7 @@ func TestServiceMap_Insert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.m.Insert(tt.args.items...)
+
 			if got := tt.m.Len(); got != tt.want {
 				t.Errorf("ServiceMap.Insert() = %v, want %v", got, tt.want)
 			}
@@ -168,6 +169,7 @@ func TestServiceMap_Delete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.m.Delete(tt.args.items...)
+
 			if got := tt.m.Len(); got != tt.want {
 				t.Errorf("ServiceMap.Delete() = %v, want %v", got, tt.want)
 			}
@@ -181,9 +183,9 @@ func TestServiceMap_Has(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
 		m    ServiceMap
 		args args
+		name string
 		want bool
 	}{
 		{
@@ -329,8 +331,8 @@ func TestServiceMap_List(t *testing.T) {
 
 func TestServiceMap_Len(t *testing.T) {
 	tests := []struct {
-		name string
 		m    ServiceMap
+		name string
 		want int
 	}{
 		{
@@ -403,9 +405,9 @@ func TestNewDeploymentMap(t *testing.T) {
 	}
 
 	tests := []struct {
+		want DeploymentMap
 		name string
 		args args
-		want DeploymentMap
 	}{
 		{
 			name: "empty map",
@@ -480,6 +482,7 @@ func TestDeploymentMap_Insert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.m.Insert(tt.args.items...)
+
 			if got := tt.m.Len(); got != tt.want {
 				t.Errorf("DeploymentMap.Insert() = %v, want %v", got, tt.want)
 			}
@@ -527,6 +530,7 @@ func TestDeploymentMap_Delete(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.m.Delete(tt.args.items...)
+
 			if got := tt.m.Len(); got != tt.want {
 				t.Errorf("DeploymentMap.Delete() = %v, want %v", got, tt.want)
 			}
@@ -540,9 +544,9 @@ func TestDeploymentMap_Has(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
 		m    DeploymentMap
 		args args
+		name string
 		want bool
 	}{
 		{
@@ -688,8 +692,8 @@ func TestDeploymentMap_List(t *testing.T) {
 
 func TestDeploymentMap_Len(t *testing.T) {
 	tests := []struct {
-		name string
 		m    DeploymentMap
+		name string
 		want int
 	}{
 		{

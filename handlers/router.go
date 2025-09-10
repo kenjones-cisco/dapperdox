@@ -1,3 +1,4 @@
+// Package handlers provides the API handlers for the service.
 package handlers
 
 import (
@@ -81,16 +82,16 @@ func withCsrf(h http.Handler) http.Handler {
 	csrfHandler.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		rsn := nosurf.Reason(req).Error()
 		log.Logger().Warnf("failed csrf validation: %s", rsn)
-		render.HTML(w, http.StatusBadRequest, "error", map[string]interface{}{"error": rsn})
+		render.HTML(w, http.StatusBadRequest, "error", map[string]any{"error": rsn})
 	}))
 
 	return csrfHandler
 }
 
 func timeoutHandler(h http.Handler) http.Handler {
-	return timeout.Handler(h, 1*time.Second, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	return timeout.Handler(h, 1*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		log.Logger().Warn("request timed out")
-		render.HTML(w, http.StatusRequestTimeout, "error", map[string]interface{}{"error": "Request timed out"})
+		render.HTML(w, http.StatusRequestTimeout, "error", map[string]any{"error": "Request timed out"})
 	}))
 }
 

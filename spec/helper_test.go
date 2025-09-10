@@ -19,7 +19,7 @@ func (fd *fakeDiscoverer) Specs() map[string][]byte {
 	return fd.specs
 }
 
-func (fd *fakeDiscoverer) RegisterOnChangeFunc(f func()) {}
+func (fd *fakeDiscoverer) RegisterOnChangeFunc(_ func()) {}
 
 // specToByteSlice opens a test spec at a provided file-path and converts into a byte slice.
 func specToByteSlice(specLoc string) []byte {

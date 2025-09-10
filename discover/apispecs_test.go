@@ -31,10 +31,10 @@ func Test_fetchAPISpecs(t *testing.T) {
 	}
 
 	tests := []struct {
-		name   string
-		fields fields
 		args   args
+		name   string
 		want   int
+		fields fields
 	}{
 		{
 			name: "fail - empty hostname in invalid service map",
@@ -347,16 +347,16 @@ func Test_processSpec(t *testing.T) {
 	viper.Set(config.SpecDir, "../tmp/specs")
 
 	type args struct {
-		hostname    string
 		rewriteSpec *spec.Swagger
 		svcSpec     *spec.Swagger
+		hostname    string
 	}
 
 	tests := []struct {
-		name     string
 		args     args
-		wantPath string
 		want     *spec.Swagger
+		name     string
+		wantPath string
 		wantErr  bool
 	}{
 		{

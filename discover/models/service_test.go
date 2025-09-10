@@ -10,8 +10,8 @@ func TestServiceExternal(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
 		args args
+		name string
 		want bool
 	}{
 		{
@@ -47,9 +47,9 @@ func TestPortListGet(t *testing.T) {
 	}
 
 	tests := []struct {
+		want     *Port
 		name     string
 		args     args
-		want     *Port
 		wantBool bool
 	}{
 		{

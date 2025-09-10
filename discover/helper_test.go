@@ -42,7 +42,7 @@ func copyKubeCert() {
 }
 
 func genServerAPI(path string) *httptest.Server {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		spec, err := os.ReadFile(path)
 		if err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -148,14 +148,11 @@ var testDeployments = []*models.Deployment{
 	},
 }
 
-type fakeController struct {
-	wantErr bool
-	wantNil bool
-}
+type fakeController struct{}
 
-func (c *fakeController) AppendServiceHandler(f func(*models.Service, models.Event)) {}
+func (c *fakeController) AppendServiceHandler(_ func(*models.Service, models.Event)) {}
 
-func (c *fakeController) AppendDeploymentHandler(f func(*models.Deployment, models.Event)) {}
+func (c *fakeController) AppendDeploymentHandler(_ func(*models.Deployment, models.Event)) {}
 
 func (c *fakeController) Run(stop <-chan struct{}) {
 	<-stop

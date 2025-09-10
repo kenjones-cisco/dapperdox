@@ -22,11 +22,11 @@ package navigation
 // Node represents the relationship between pages.
 type Node struct {
 	ChildMap  map[string]*Node
-	Children  []*Node
 	SortOrder string
 	Name      string
 	ID        string
 	URI       string
+	Children  []*Node
 }
 
 // ByOrder implements the Sorter interface for array of Node.

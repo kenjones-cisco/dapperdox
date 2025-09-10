@@ -44,19 +44,16 @@ type watcher interface {
 type catalogOptions struct {
 	// Namespace the controller watches. If set to meta_v1.NamespaceAll (""), controller watches all namespaces
 	WatchedNamespace string
-	ResyncPeriod     time.Duration
 	DomainSuffix     string
+	ResyncPeriod     time.Duration
 }
 
 // catalog is a collection of synchronized resource watchers
 // caches are thread-safe.
 type catalog struct {
-	domainSuffix string
-
-	client      kubernetes.Interface
-	queue       Queue
 	services    cacheHandler
 	deployments cacheHandler
+	queue       Queue
 }
 
 type cacheHandler struct {
@@ -82,9 +79,7 @@ func newCatalog(client kubernetes.Interface, options catalogOptions) watcher {
 
 	// Queue requires a time duration for a retry delay after a handler error
 	out := &catalog{
-		domainSuffix: options.DomainSuffix,
-		client:       client,
-		queue:        NewQueue(1 * time.Second),
+		queue: NewQueue(1 * time.Second),
 	}
 
 	out.services = out.createInformer(&v1.Service{}, options.ResyncPeriod,

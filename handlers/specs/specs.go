@@ -56,7 +56,7 @@ func Register(r *mux.Router, d discover.DiscoveryManager) {
 		// Replace URLs in document
 		tmpSpec = []byte(specReplacer.Replace(string(tmpSpec)))
 
-		r.Path(k).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r.Path(k).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-control", "public, max-age=259200")
 			w.WriteHeader(http.StatusOK)

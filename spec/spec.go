@@ -86,16 +86,15 @@ var APISuiteGroups = make(map[string][]*APISpecification)
 
 // APISpecification holds the content of a parsed api.
 type APISpecification struct {
-	ID      string
-	APIs    APISet // APIs represents the parsed APIs
-	APIInfo Info
-	URL     string
-	GroupBy string
-
 	SecurityDefinitions map[string]SecurityScheme
 	DefaultSecurity     map[string]Security
 	ResourceList        map[string]map[string]*Resource // Version->ResourceName->Resource
 	APIVersions         map[string]APISet               // Version->APISet
+	APIInfo             Info
+	ID                  string
+	URL                 string
+	GroupBy             string
+	APIs                APISet // APIs represents the parsed APIs
 }
 
 // APISet list of grouped APIs.
@@ -103,17 +102,17 @@ type APISet []APIGroup
 
 // APIGroup parents all grouped API methods (Grouping controlled by tagging, if used, or by method path otherwise).
 type APIGroup struct {
+	URL                    *url.URL
+	Versions               map[string][]Method // All versions, keyed by version string.
+	Info                   *Info
 	ID                     string
 	Name                   string
-	URL                    *url.URL
-	MethodNavigationByName bool
+	CurrentVersion         string // The latest version in operation for the API
 	MethodSortBy           []string
-	Versions               map[string][]Method // All versions, keyed by version string.
-	Methods                []Method            // The current version
-	CurrentVersion         string              // The latest version in operation for the API
-	Info                   *Info
+	Methods                []Method // The current version
 	Consumes               []string
 	Produces               []string
+	MethodNavigationByName bool
 }
 
 // Info holds display information about API.
@@ -130,22 +129,22 @@ type Version struct {
 
 // OAuth2Scheme is a specific security scheme.
 type OAuth2Scheme struct {
+	Scopes           map[string]string
 	OAuth2Flow       string
 	AuthorizationURL string
 	TokenURL         string
-	Scopes           map[string]string
 }
 
 // SecurityScheme holds the security scheme from a parsed api.
 type SecurityScheme struct {
-	IsAPIKey      bool
-	IsBasic       bool
-	IsOAuth2      bool
+	OAuth2Scheme
 	Type          string
 	Description   string
 	ParamName     string
 	ParamLocation string
-	OAuth2Scheme
+	IsAPIKey      bool
+	IsBasic       bool
+	IsOAuth2      bool
 }
 
 // Security holds the defined enabled security.
@@ -156,38 +155,38 @@ type Security struct {
 
 // Method represents an API method.
 type Method struct {
-	ID              string
+	BodyParam       *Parameter
+	APIGroup        *APIGroup
+	Security        map[string]Security
+	DefaultResponse *Response // A ptr to allow of easy checking of its existence in templates
+	Responses       map[int]Response
+	NavigationName  string
+	Method          string
+	SortKey         string
 	Name            string
 	Description     string
-	Method          string
-	OperationName   string
-	NavigationName  string
 	Path            string
-	Consumes        []string
-	Produces        []string
-	PathParams      []Parameter
-	QueryParams     []Parameter
-	HeaderParams    []Parameter
-	BodyParam       *Parameter
+	OperationName   string
+	ID              string
 	FormParams      []Parameter
-	Responses       map[int]Response
-	DefaultResponse *Response // A ptr to allow of easy checking of its existence in templates
+	HeaderParams    []Parameter
+	QueryParams     []Parameter
 	Resources       []*Resource
-	Security        map[string]Security
-	APIGroup        *APIGroup
-	SortKey         string
+	PathParams      []Parameter
+	Produces        []string
+	Consumes        []string
 }
 
 // Parameter represents an API method parameter.
 type Parameter struct {
-	Type                        []string
-	Enum                        []string
+	Resource                    *Resource // For "in body" parameters
 	Name                        string
 	Description                 string
 	In                          string
 	CollectionFormat            string
 	CollectionFormatDescription string
-	Resource                    *Resource // For "in body" parameters
+	Type                        []string
+	Enum                        []string
 	Required                    bool
 	IsArray                     bool // "in body" parameter is an array
 }
@@ -206,32 +205,32 @@ type ResourceOrigin int
 
 // Resource represents an API resource.
 type Resource struct {
-	ID                    string
-	FQNS                  []string
+	Properties            map[string]*Resource
+	Methods               map[string]*Method
 	Title                 string
 	Description           string
 	Example               string
 	Schema                string
+	ID                    string
 	Type                  []string // Will contain two elements if an array or map [0]=array [1]=What type is in the array
-	Properties            map[string]*Resource
-	Required              bool
-	ReadOnly              bool
 	ExcludeFromOperations []string
-	Methods               map[string]*Method
+	FQNS                  []string
 	Enum                  []string
 	origin                ResourceOrigin
+	Required              bool
+	ReadOnly              bool
 }
 
 // Header represents an API parameter.
 type Header struct {
 	Name                        string
 	Description                 string
-	Type                        []string // Will contain two elements if an array [0]=array [1]=What type is in the array
 	CollectionFormat            string
 	CollectionFormatDescription string
 	Default                     string
-	Required                    bool
+	Type                        []string // Will contain two elements if an array [0]=array [1]=What type is in the array
 	Enum                        []string
+	Required                    bool
 }
 
 // SortMethods implements sortable array of method.
@@ -485,8 +484,7 @@ func (c *APISpecification) load(specLocation string, document *loads.Document) {
 
 			api.CurrentVersion = ver
 
-			pi := pathItem
-			c.getMethods(tag, api, &api.Methods, &pi, path, ver) // Current version
+			c.getMethods(tag, api, &api.Methods, &pathItem, path, ver) // Current version
 
 			// If API was populated (will not be if tags do not match), add to set
 			if !groupingByTag && len(api.Methods) > 0 {
@@ -558,8 +556,10 @@ func (c *APISpecification) getMethod(tag spec.Tag, api *APIGroup, methods *[]Met
 		*methods = append(*methods, *method)
 	} else {
 		log().Trace("    > Check tags")
+
 		for _, t := range operation.Tags {
 			log().Tracef("      - Compare tag %q with %q", tag.Name, t)
+
 			if tag.Name == "" || t == tag.Name {
 				method := c.processMethod(api, pathitem, operation, path, methodname, version)
 				*methods = append(*methods, *method)
@@ -713,8 +713,7 @@ func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem,
 			}
 		}
 
-		r := response
-		rsp := c.buildResponse(&r, method, version)
+		rsp := c.buildResponse(&response, method, version)
 		rsp.StatusDescription = httpStatusDescription(status)
 		method.Responses[status] = *rsp
 	}
@@ -899,7 +898,7 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 	log().Trace("CHECK schema type and items")
 
 	// It is possible for a response to be an array of
-	//     objects, and it it possible to declare this in several ways:
+	//     objects, and it possible to declare this in several ways:
 	// 1. As :
 	//      "schema": {
 	//        "$ref": "model"
@@ -947,13 +946,14 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 			s.Type = spec.StringOrArray([]string{arrayType, s.Type[0]})
 		} else {
 			s.Type = stringorarray // Put back original type
+
 			log().Trace("putting s.Type back")
 		}
 
 		log().Tracef("REMAP SCHEMA (Type is now %s)", s.Type)
 	}
 
-	if len(s.Format) > 0 {
+	if s.Format != "" {
 		s.Type[len(s.Type)-1] = s.Format
 	}
 
@@ -1082,8 +1082,7 @@ func (c *APISpecification) compileproperties(s *spec.Schema, r *Resource, method
 	}
 
 	for name, property := range s.Properties {
-		p := property
-		c.processProperty(&p, name, r, method, id, required, jsonRep, myFQNS, chopped, isRequestResource)
+		c.processProperty(&property, name, r, method, id, required, jsonRep, myFQNS, chopped, isRequestResource)
 	}
 
 	// Special case to deal with AdditionalProperties (which really just boils down to declaring a

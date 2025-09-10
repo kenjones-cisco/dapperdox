@@ -17,9 +17,9 @@ const (
 // Queue of work tickets processed using a rate-limiting loop.
 type Queue interface {
 	// Push a ticket
-	Push(Task)
+	Push(item Task)
 	// Run the loop until a signal on the channel
-	Run(<-chan struct{})
+	Run(stop <-chan struct{})
 }
 
 // Handler specifies a function to apply on an object for a given event type.
@@ -28,7 +28,7 @@ type Handler func(obj interface{}, event models.Event) error
 // Task object for the event watchers; processes until handler succeeds.
 type Task struct {
 	handler Handler
-	obj     interface{}
+	obj     any
 	event   models.Event
 }
 
@@ -38,8 +38,8 @@ func NewTask(handler Handler, obj interface{}, event models.Event) Task {
 }
 
 type queueImpl struct {
-	delay   time.Duration
 	queue   []Task
+	delay   time.Duration
 	lock    sync.Mutex
 	closing bool
 }
@@ -111,7 +111,7 @@ type ChainHandler struct {
 }
 
 // Apply is the handler function.
-func (ch *ChainHandler) Apply(obj interface{}, event models.Event) error {
+func (ch *ChainHandler) Apply(obj any, event models.Event) error {
 	for _, f := range ch.funcs {
 		if err := f(obj, event); err != nil {
 			return err

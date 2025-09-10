@@ -5,8 +5,8 @@ import "testing"
 func TestEvent_String(t *testing.T) {
 	tests := []struct {
 		name  string
-		event Event
 		want  string
+		event Event
 	}{
 		{
 			name:  "EventAdd",

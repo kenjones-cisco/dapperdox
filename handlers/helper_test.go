@@ -10,11 +10,10 @@ import (
 )
 
 type fakeDiscover struct {
-	t *testing.T
-
-	testName  string
+	t         *testing.T
 	sPaths    map[string]string
 	wantSpecs map[string][]byte
+	testName  string
 	wantErr   bool
 }
 
@@ -42,7 +41,7 @@ func (fd *fakeDiscover) Specs() map[string][]byte {
 	return specs
 }
 
-func (fd *fakeDiscover) RegisterOnChangeFunc(f func()) {}
+func (fd *fakeDiscover) RegisterOnChangeFunc(_ func()) {}
 
 // specToByteSlice opens a test spec at a provided file-path and converts into a byte slice.
 func specToByteSlice(specLoc string) []byte {

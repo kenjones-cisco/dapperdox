@@ -90,9 +90,9 @@ func (*renderer) Header(out *bytes.Buffer, text func() bool, level int, _ string
 
 	anchorName := sanitized_anchor_name.Create(textContent)
 
-	_, _ = out.WriteString(fmt.Sprintf(`<h%d><a name=%q class="anchor" href="#%s" rel="nofollow" aria-hidden="true"><span class="octicon octicon-link"></span></a>`, level, anchorName, anchorName))
+	_, _ = fmt.Fprintf(out, `<h%d><a name=%q class="anchor" href="#%s" rel="nofollow" aria-hidden="true"><span class="octicon octicon-link"></span></a>`, level, anchorName, anchorName)
 	_, _ = out.WriteString(textHTML)
-	_, _ = out.WriteString(fmt.Sprintf("</h%d>\n", level))
+	_, _ = fmt.Fprintf(out, "</h%d>\n", level)
 }
 
 // extractText returns the recursive concatenation of the text content of an html node.
@@ -212,14 +212,14 @@ func highlightDiff(src []byte) ([]byte, bool) {
 
 	var offset int
 
-	for lineIndex := 0; lineIndex < len(lines); lineIndex++ {
+	for lineIndex := range lines {
 		lineStarts[lineIndex] = offset
 		offset += len(lines[lineIndex]) + 1
 	}
 
 	lastDel, lastIns := -1, -1
 
-	for lineIndex := 0; lineIndex < len(lines); lineIndex++ {
+	for lineIndex := range lines {
 		var lineFirstChar byte
 
 		if len(lines[lineIndex]) > 0 {

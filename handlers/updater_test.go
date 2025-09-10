@@ -29,9 +29,9 @@ func TestUpdater_AutoDiscoverUpdater(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
 		fields    fields
 		wantSpecs map[string][]byte
+		name      string
 		wantErr   bool
 	}{
 		{
@@ -108,7 +108,7 @@ func TestUpdater_AutoDiscoverUpdater(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.name, func(_ *testing.T) {
 			fd.testName = tt.name
 			fd.sPaths = tt.fields.specPathMap
 			fd.wantSpecs = tt.wantSpecs

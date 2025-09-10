@@ -25,6 +25,6 @@ func (d *defaultDiscoverer) Specs() map[string][]byte {
 }
 
 // Run starts the discovery process.
-func (d *defaultDiscoverer) RegisterOnChangeFunc(f func()) {
+func (d *defaultDiscoverer) RegisterOnChangeFunc(_ func()) {
 	log().Info("Discoverer not implemented")
 }

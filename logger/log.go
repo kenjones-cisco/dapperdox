@@ -1,3 +1,4 @@
+// Package logger provides the logging implementation for the dapperdox service.
 package logger
 
 import (

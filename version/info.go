@@ -1,3 +1,4 @@
+// Package version provides the version metadata for the service.
 package version
 
 import (

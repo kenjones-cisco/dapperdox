@@ -6,7 +6,7 @@ PROJECT_FILE="${PROJECT_FILE:-project.yml}"
 get_targets() {
     local data
 
-    data=$(yaml -j read "${PROJECT_FILE}" metadata.build[*] | jq -r '.[] | [ .["target"] ] | join(" ")')
+    data=$(yq '.metadata.build[].target' "${PROJECT_FILE}")
     echo "$data"
 }
 
@@ -16,8 +16,8 @@ build() {
     local ldflags
     local binary
 
-    project=$(yaml read "${PROJECT_FILE}" metadata.name)
-    import_path=$(yaml read "${PROJECT_FILE}" metadata.import)
+    project=$(yq '.metadata.name' "${PROJECT_FILE}")
+    import_path=$(yq '.metadata.import' "${PROJECT_FILE}")
 
     ldflags="-X ${import_path}/version.GitCommit=$(git rev-parse --short HEAD)"
     ldflags="${ldflags} -X ${import_path}/version.GitDescribe=$(git describe --tags --always)"

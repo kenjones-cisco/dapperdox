@@ -1,3 +1,4 @@
+// Package models provides the structures used for discovering running services in kubernetes and the associated API docs.
 package models
 
 import (
@@ -17,19 +18,15 @@ import (
 type Service struct {
 	// Hostname of the service, e.g. "catalog.mystore.com"
 	Hostname string `json:"hostname"`
-
 	// Address specifies the service IPv4 address of the load balancer
 	Address string `json:"address,omitempty"`
-
-	// Ports is the set of network ports where the service is listening for
-	// connections
-	Ports PortList `json:"ports"`
-
 	// ExternalName is only set for external services and holds the external
 	// service DNS name.  External services are name-based solution to represent
 	// external service instances as a service inside the cluster.
 	ExternalName string `json:"external,omitempty"`
-
+	// Ports is the set of network ports where the service is listening for
+	// connections
+	Ports PortList `json:"ports"`
 	// LoadBalancingDisabled indicates that no load balancing should be done for this service.
 	LoadBalancingDisabled bool `json:"-"`
 }
@@ -46,14 +43,12 @@ type Port struct {
 	// Name ascribes a human readable name for the port object. When a
 	// service has multiple ports, the name field is mandatory
 	Name string `json:"name,omitempty"`
-
+	// Protocol to be used for the port.
+	Protocol Protocol `json:"protocol"`
 	// Port number where the service can be reached. Does not necessarily
 	// map to the corresponding port numbers for the instances behind the
 	// service. See networkEndpoint definition below.
 	Port int `json:"port"`
-
-	// Protocol to be used for the port.
-	Protocol Protocol `json:"protocol"`
 }
 
 // PortList is a set of ports.
@@ -83,7 +78,7 @@ const (
 	// ProtocolHTTP declares that the port carries HTTP/1.1 traffic.
 	// Note that HTTP/1.0 or earlier may not be supported by the proxy.
 	ProtocolHTTP Protocol = "HTTP"
-	// ProtocolTCP declares the the port uses TCP.
+	// ProtocolTCP declares the port uses TCP.
 	// This is the default protocol for a service port.
 	ProtocolTCP Protocol = "TCP"
 	// ProtocolUnsupported - value to signify that the protocol is unsupported.

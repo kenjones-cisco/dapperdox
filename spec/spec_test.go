@@ -51,8 +51,8 @@ func TestLoadSpecifications_AutoDiscovery(t *testing.T) {
 	viper.Set(config.DiscoveryEnabled, true)
 
 	tests := []struct {
-		name       string
 		specsCache map[string][]byte
+		name       string
 		wantErr    bool
 	}{
 		{

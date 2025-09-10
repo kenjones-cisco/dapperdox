@@ -1,3 +1,4 @@
+// Package config provides the configurations for the service.
 package config
 
 import (

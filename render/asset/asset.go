@@ -111,6 +111,7 @@ func Compile(dir, prefix string) {
 		if info == nil {
 			return nil
 		}
+
 		if info.IsDir() {
 			// Skip hidden directories TODO this should be applied to files also.
 			_, node := filepath.Split(path)
@@ -222,7 +223,7 @@ func processMetadata(doc []byte) ([]byte, map[string]string) {
 		trimmed := strings.TrimSpace(splitLine[0])
 
 		if len(splitLine) < 2 || !unicode.IsLetter(rune(trimmed[0])) { // Have we reached a non KEY: line? If so, we're done with the metadata.
-			if len(line) > 0 { // If the line is not empty, keep the contents
+			if line != "" { // If the line is not empty, keep the contents
 				newdoc += line + "\n"
 			}
 

@@ -20,11 +20,11 @@ type GuideType []*navigation.Node
 type Vars map[string]interface{}
 
 // DefaultVars adds the default vars (config, specs, others....) to the data map.
-func DefaultVars(req *http.Request, s *spec.APISpecification, m Vars) map[string]interface{} {
+func DefaultVars(_ *http.Request, s *spec.APISpecification, m Vars) map[string]any {
 	if m == nil {
 		log().Trace("creating new template data map")
 
-		m = make(map[string]interface{})
+		m = make(map[string]any)
 	}
 
 	m["Config"] = config.C

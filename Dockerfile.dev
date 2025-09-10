@@ -1,22 +1,24 @@
-FROM golang:1.18
+FROM golang:1.23
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gettext-base \
         zip \
     && rm -rf /var/lib/apt/lists/*
 
-ENV YAML_BIN_VERSION 1.13.1
-ENV JQ_BIN_VERSION 1.6
+ENV YQ_BIN_VERSION v4.47.1
 
-RUN wget -O /usr/local/bin/jq "https://github.com/stedolan/jq/releases/download/jq-${JQ_BIN_VERSION}/jq-linux64" \
-    && chmod 755 /usr/local/bin/jq \
-    && wget -O /usr/local/bin/yaml "https://github.com/mikefarah/yq/releases/download/${YAML_BIN_VERSION}/yaml_linux_amd64" \
-    && chmod 755 /usr/local/bin/yaml
+ENV GOPATH=/go
+ENV GOBIN=/go/bin
+ENV GOLANGCI_LINT_VERSION "v1.64.8"
 
-RUN go install golang.org/x/tools/cmd/goimports@latest \
+RUN wget -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_BIN_VERSION}/yq_linux_amd64" \
+    && chmod 755 /usr/local/bin/yq
+
+RUN go install golang.org/x/tools/cmd/goimports@v0.24.0 \
     && go install github.com/mitchellh/gox@latest \
     && go install gotest.tools/gotestsum@latest \
-    && wget -O - -q https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b /usr/local/bin v1.46.2 \
+    && wget -O - -q https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ${GOBIN} ${GOLANGCI_LINT_VERSION} \
     && rm -rf /go/src/*
 
-ENV CGO_ENABLED 0
+ENV CGO_ENABLED=0 \
+    GOFLAGS='-buildvcs=false'

@@ -14,7 +14,7 @@ func TestQueue(t *testing.T) {
 	stop := make(chan struct{})
 	out := 0
 	err := true
-	add := func(obj interface{}, event models.Event) error {
+	add := func(obj any, _ models.Event) error {
 		log().Infof("adding %d, error: %t", obj.(int), err)
 		objCnt, _ := obj.(int)
 
@@ -33,7 +33,7 @@ func TestQueue(t *testing.T) {
 
 	q.Push(Task{handler: add, obj: 1})
 	q.Push(Task{handler: add, obj: 2})
-	q.Push(Task{handler: func(obj interface{}, event models.Event) error {
+	q.Push(Task{handler: func(_ any, _ models.Event) error {
 		if out != 4 {
 			t.Errorf("Queue => %d, want %d", out, 4)
 		}
@@ -49,7 +49,7 @@ func TestChainedHandler(t *testing.T) {
 	stop := make(chan struct{})
 	out := 0
 	f := func(i int) Handler {
-		return func(obj interface{}, event models.Event) error {
+		return func(_ any, _ models.Event) error {
 			out += i
 
 			return nil
@@ -63,7 +63,7 @@ func TestChainedHandler(t *testing.T) {
 	go q.Run(stop)
 
 	q.Push(Task{handler: handler.Apply, obj: 0})
-	q.Push(Task{handler: func(obj interface{}, event models.Event) error {
+	q.Push(Task{handler: func(_ any, _ models.Event) error {
 		if out != 3 {
 			t.Errorf("ChainedHandler => %d, want %d", out, 3)
 		}
