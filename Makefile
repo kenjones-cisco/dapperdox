@@ -21,6 +21,7 @@ help:
 	@echo '    format          Run code formatter.'
 	@echo '    check           Run static code analysis (lint).'
 	@echo '    test            Run tests on project.'
+	@echo '    test-browser    Run explorer compatibility tests in Docker.'
 	@echo '    cover           Run tests and capture code coverage metrics on project.'
 	@echo '    clean           Clean the directory tree of produced artifacts.'
 	@echo '    veryclean       Same as clean but also removes cached dependencies.'
@@ -41,7 +42,7 @@ veryclean: clean
 
 ## builds the dev container
 prepare: tmp/dev_image_id
-tmp/dev_image_id: Dockerfile.dev scripts/golangci-base.yml
+tmp/dev_image_id: Dockerfile.dev scripts/golangci-base.yml package.json package-lock.json
 	@mkdir -p tmp
 	@docker rmi -f ${DEV_IMAGE} > /dev/null 2>&1 || true
 	@echo "## Building dev container"
@@ -116,6 +117,10 @@ test: check
 ## Run tests on project with race condition detector enabled.
 race: check
 	${DOCKERRUN} bash ./scripts/test.sh --race
+
+.PHONY: test-browser
+test-browser: prepare
+	${DOCKERRUN} npm run test:browser
 
 ## Run tests and capture code coverage metrics on project.
 cover: check

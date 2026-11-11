@@ -431,6 +431,7 @@ func TestShutdownCancelsSpecFetch(t *testing.T) {
 
 func newSnapshotTestDiscoverer() *Discoverer {
 	return &Discoverer{
+		settings:         config.Snapshot(),
 		data:             &state{services: models.NewServiceMap()},
 		stop:             make(chan struct{}),
 		specs:            make(map[string][]byte),

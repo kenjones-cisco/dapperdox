@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/kenjones-cisco/dapperdox/config"
@@ -24,6 +23,7 @@ const (
 
 // Discoverer represents the state of the discovery mechanism.
 type Discoverer struct {
+	settings         config.Settings
 	fetchCtx         context.Context //nolint:containedctx // Discovery owns this context and cancels it on shutdown.
 	cancelFetch      context.CancelFunc
 	services         watcher
@@ -53,6 +53,11 @@ type state struct {
 
 // NewDiscoverer configures a new instance of a Discoverer using Kubernetes client.
 func NewDiscoverer() (DiscoveryManager, error) {
+	return NewDiscovererWithConfig(config.Snapshot())
+}
+
+// NewDiscovererWithConfig owns its startup discovery settings.
+func NewDiscovererWithConfig(settings config.Settings) (DiscoveryManager, error) {
 	log().Info("initializing new discoverer instance")
 
 	client, err := newClient()
@@ -60,17 +65,23 @@ func NewDiscoverer() (DiscoveryManager, error) {
 		return nil, err
 	}
 
-	return newDiscovererWithClient(client), nil
+	return newDiscovererWithClientAndConfig(client, settings), nil
 }
 
 func newDiscovererWithClient(client kubernetes.Interface) DiscoveryManager {
+	return newDiscovererWithClientAndConfig(client, config.Snapshot())
+}
+
+func newDiscovererWithClientAndConfig(client kubernetes.Interface, settings config.Settings) DiscoveryManager {
+	settings = settings.Clone()
 	options := catalogOptions{
-		DomainSuffix:     viper.GetString(config.DiscoverySuffix),
-		WatchedNamespace: viper.GetString(config.DiscoveryNamespace),
-		ResyncPeriod:     viper.GetDuration(config.DiscoveryInterval),
+		DomainSuffix:     settings.DiscoverySuffix,
+		WatchedNamespace: settings.DiscoveryNamespace,
+		ResyncPeriod:     settings.DiscoveryInterval,
 	}
 
 	d := &Discoverer{
+		settings: settings,
 		services: newCatalog(client, options),
 		data: &state{
 			services: models.NewServiceMap(),
@@ -265,7 +276,7 @@ func (d *Discoverer) discover() {
 
 	if fetch == nil {
 		fetch = func(services []*models.Service) (map[string][]byte, map[string]string) {
-			return fetchAPIResults(ctx, services)
+			return d.loader().fetchAPIResults(ctx, services)
 		}
 	}
 
@@ -362,7 +373,7 @@ func (d *Discoverer) isStopping() bool {
 func (d *Discoverer) updateServices(service *models.Service, event models.Event) {
 	log().Debug(fmt.Sprintf("(Discover Handler) Service: %v Event: %v", service, event))
 
-	if service == nil || isIgnoredSvc(service.Hostname) {
+	if service == nil || d.loader().isIgnoredSvc(service.Hostname) {
 		if service != nil {
 			log().Debug(fmt.Sprintf("(Discover Handler) skipping service is part of ignore list: %s", service.Hostname))
 		}
@@ -390,7 +401,7 @@ func (d *Discoverer) updateServices(service *models.Service, event models.Event)
 
 		d.serviceRevision++
 		d.serviceRevisions[svc.Hostname] = d.serviceRevision
-		d.updateActiveAPIsLocked(svc.Hostname, serviceAPIKeys(svc))
+		d.updateActiveAPIsLocked(svc.Hostname, serviceAPIKeysWithConfig(svc, d.loader().settings))
 	case models.EventDelete:
 		inventoryChanged = true
 
@@ -418,7 +429,7 @@ func (d *Discoverer) updateServices(service *models.Service, event models.Event)
 func (d *Discoverer) updateDeployments(deployment *models.Deployment, event models.Event) {
 	log().Debug(fmt.Sprintf("(Discover Handler) Deployment: %v Event: %v", deployment, event))
 
-	if deployment != nil && isIgnoredSvc(deployment.Name) {
+	if deployment != nil && d.loader().isIgnoredSvc(deployment.Name) {
 		log().Debug(fmt.Sprintf("(Discover Handler) skipping deployment that is part of ignore list: %+v", *deployment))
 
 		return
@@ -484,9 +495,9 @@ func (d *Discoverer) removeAPIStatusLocked(hostname string) bool {
 	return statusExists || specExists
 }
 
-func serviceAPIKeys(service *models.Service) map[string]struct{} {
+func serviceAPIKeysWithConfig(service *models.Service, settings config.Settings) map[string]struct{} {
 	keys := make(map[string]struct{})
-	if service == nil || service.Hostname == "" || isIgnoredSvc(service.Hostname) {
+	if service == nil || service.Hostname == "" || (specLoader{settings}).isIgnoredSvc(service.Hostname) {
 		return keys
 	}
 
@@ -499,6 +510,10 @@ func serviceAPIKeys(service *models.Service) map[string]struct{} {
 	}
 
 	return keys
+}
+
+func (d *Discoverer) loader() specLoader {
+	return specLoader{d.settings}
 }
 
 func cloneService(service *models.Service) *models.Service {

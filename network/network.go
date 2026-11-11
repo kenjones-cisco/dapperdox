@@ -25,21 +25,29 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/spf13/viper"
-
 	"github.com/kenjones-cisco/dapperdox/config"
 )
 
 // NewListener creates a new network Listener.
 func NewListener() (net.Listener, error) {
-	log().Info(fmt.Sprintf("listening on %s for unsecured connections", viper.GetString(config.BindAddr)))
+	return NewListenerWithConfig(config.Snapshot())
+}
 
-	return newListener()
+// NewListenerWithConfig binds the startup-configured documentation listener.
+func NewListenerWithConfig(settings config.Settings) (net.Listener, error) {
+	log().Info(fmt.Sprintf("listening on %s for unsecured connections", settings.BindAddr))
+
+	return newListener(settings)
 }
 
 // NewSecuredListener creates a secure network Listener.
 func NewSecuredListener() (net.Listener, error) {
-	crt, err := tls.LoadX509KeyPair(viper.GetString(config.TLSCert), viper.GetString(config.TLSKey))
+	return NewSecuredListenerWithConfig(config.Snapshot())
+}
+
+// NewSecuredListenerWithConfig binds the startup-configured TLS listener.
+func NewSecuredListenerWithConfig(settings config.Settings) (net.Listener, error) {
+	crt, err := tls.LoadX509KeyPair(settings.TLSCert, settings.TLSKey)
 	if err != nil {
 		return nil, err
 	}
@@ -68,16 +76,16 @@ func NewSecuredListener() (net.Listener, error) {
 		Certificates: []tls.Certificate{crt},
 	}
 
-	l, err := newListener()
+	l, err := newListener(settings)
 	if err != nil {
 		return nil, err
 	}
 
-	log().Info(fmt.Sprintf("listening on %s for SECURED connections", viper.GetString(config.BindAddr)))
+	log().Info(fmt.Sprintf("listening on %s for SECURED connections", settings.BindAddr))
 
 	return tls.NewListener(l, tlscfg), nil
 }
 
-func newListener() (net.Listener, error) {
-	return new(net.ListenConfig).Listen(context.Background(), "tcp", viper.GetString(config.BindAddr))
+func newListener(settings config.Settings) (net.Listener, error) {
+	return new(net.ListenConfig).Listen(context.Background(), "tcp", settings.BindAddr)
 }

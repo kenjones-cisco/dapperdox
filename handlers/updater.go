@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover"
@@ -71,6 +70,8 @@ type Status struct {
 
 // Updater owns the sole builder and atomically publishes complete request views.
 type Updater struct {
+	settings config.Settings
+	parser   *spec.Parser
 	d        discover.DiscoveryManager
 	assets   *asset.Catalog
 	current  atomic.Pointer[publishedView]
@@ -85,17 +86,30 @@ type Updater struct {
 
 // NewAutoDiscoverUpdater starts a single, coalescing refresh worker.
 func NewAutoDiscoverUpdater(d discover.DiscoveryManager) (*Updater, error) {
-	catalog, err := asset.NewCatalog()
+	return NewAutoDiscoverUpdaterWithConfig(d, config.Snapshot())
+}
+
+// NewAutoDiscoverUpdaterWithConfig owns its parser and detached startup configuration.
+func NewAutoDiscoverUpdaterWithConfig(d discover.DiscoveryManager, settings config.Settings) (*Updater, error) {
+	settings = settings.Clone()
+
+	catalog, err := asset.NewCatalogWithConfig(settings)
 	if err != nil {
 		return nil, err
 	}
 
-	period := viper.GetDuration(config.DiscoveryPeriodTime)
+	parser, err := spec.NewParser(settings)
+	if err != nil {
+		return nil, err
+	}
+
+	period := settings.DiscoveryPeriodTime
 	if period <= 0 {
 		return nil, errDiscoveryPeriod
 	}
 
 	u := &Updater{
+		settings: settings, parser: parser,
 		d: d, assets: catalog, last: make(map[string]acceptedAPI),
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
@@ -103,7 +117,7 @@ func NewAutoDiscoverUpdater(d discover.DiscoveryManager) (*Updater, error) {
 	u.onChange()
 	d.RegisterOnChangeFunc(u.onChange)
 
-	go u.run(viper.GetDuration(config.DiscoveryInitialDelay), period)
+	go u.run(settings.DiscoveryInitialDelay, period)
 
 	return u, nil
 }
@@ -206,7 +220,7 @@ func (u *Updater) snapshot() discover.Snapshot {
 	return discover.Snapshot{Specs: raw, APIs: apis, Synced: true}
 }
 
-func reconcileAPI(key string, data []byte, fetched bool, outcome discover.APIStatus, old acceptedAPI, prior APIStatus) (acceptedAPI, APIStatus) {
+func (u *Updater) reconcileAPI(key string, data []byte, fetched bool, outcome discover.APIStatus, old acceptedAPI, prior APIStatus) (acceptedAPI, APIStatus) {
 	api := old
 	failure := outcome.Failure
 
@@ -215,7 +229,7 @@ func reconcileAPI(key string, data []byte, fetched bool, outcome discover.APISta
 	}
 
 	if failure == "" && (old.parsed == nil || !bytes.Equal(old.raw, data)) {
-		value, err := spec.Parse("/"+strings.TrimPrefix(key, "/")+"/api.json", data)
+		value, err := u.parser.Parse("/"+strings.TrimPrefix(key, "/")+"/api.json", data)
 		if err != nil {
 			failure = "invalid_specification"
 
@@ -336,7 +350,7 @@ func (u *Updater) reconcile(snapshot discover.Snapshot, previous, next *publishe
 
 		data, fetched := snapshot.Specs[key]
 
-		api, status := reconcileAPI(key, data, fetched, outcome, old, prior)
+		api, status := u.reconcileAPI(key, data, fetched, outcome, old, prior)
 		if api.parsed != nil {
 			accepted[key] = api
 			next.statuses[api.parsed.ID] = render.Status{
@@ -367,5 +381,5 @@ func (u *Updater) buildAccepted(accepted map[string]acceptedAPI) (*generation, e
 		return nil, err
 	}
 
-	return buildGeneration(suite, raw, u.assets)
+	return buildGenerationWithConfig(suite, raw, u.assets, u.settings)
 }

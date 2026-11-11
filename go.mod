@@ -19,7 +19,6 @@ require (
 	github.com/sourcegraph/syntaxhighlight v0.0.0-20170531221838-bd320f5d308e
 	github.com/spf13/pflag v1.1.0
 	github.com/spf13/viper v1.21.0
-	github.com/unrolled/render v1.8.1
 	golang.org/x/net v0.62.0
 	k8s.io/api v0.33.13
 	k8s.io/apimachinery v0.33.13

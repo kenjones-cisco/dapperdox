@@ -4,9 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/spf13/viper"
-
-	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/navigation"
 	"github.com/kenjones-cisco/dapperdox/spec"
@@ -26,7 +23,7 @@ func (c *Context) DefaultVars(req *http.Request, s *spec.APISpecification, m Var
 		m = make(map[string]any)
 	}
 
-	m["Config"] = config.C
+	m["Config"] = struct{ ShowAssets bool }{ShowAssets: c.settings.ShowAssets}
 	m["APISuite"] = c.Suite.Specifications
 	m["APISuiteGroups"] = c.Suite.Groups
 
@@ -38,7 +35,7 @@ func (c *Context) DefaultVars(req *http.Request, s *spec.APISpecification, m Var
 
 	// If we have a multiple specifications or are forcing a parent "root" page for the single specification
 	// then set MultipleSpecs to true to enable navigation back to the root page.
-	if viper.GetBool(config.ForceSpecList) || len(c.Suite.Specifications) > 1 {
+	if c.settings.ForceSpecList || len(c.Suite.Specifications) > 1 {
 		m["MultipleSpecs"] = true
 	}
 

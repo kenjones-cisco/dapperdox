@@ -28,7 +28,6 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/logger"
@@ -36,9 +35,14 @@ import (
 
 // Register creates routes for each static resource.
 func Register(r *mux.Router, discovered map[string][]byte) error {
+	return RegisterWithConfig(r, discovered, config.Snapshot())
+}
+
+// RegisterWithConfig publishes specifications using detached startup settings.
+func RegisterWithConfig(r *mux.Router, discovered map[string][]byte, settings config.Settings) error {
 	log().Info("Registering specifications")
 
-	specReplacer := loadReplacer()
+	specReplacer := loadReplacer(settings)
 
 	var specMap map[string][]byte
 
@@ -50,7 +54,7 @@ func Register(r *mux.Router, discovered map[string][]byte) error {
 	} else {
 		var err error
 
-		specMap, err = loadSpecsByDir()
+		specMap, err = loadSpecsByDir(settings)
 		if err != nil {
 			return err
 		}
@@ -74,32 +78,32 @@ func Register(r *mux.Router, discovered map[string][]byte) error {
 	return nil
 }
 
-func loadReplacer() *strings.Replacer {
+func loadReplacer(settings config.Settings) *strings.Replacer {
 	// Build a replacer to search/replace specification URLs
 	var replacements []string
 
 	// Configure the replacer with key=value pairs
-	for k, v := range viper.GetStringMapString(config.SpecRewriteURL) {
+	for k, v := range settings.SpecRewriteURL {
 		if v != "" {
 			// Map between configured to=from URL pair
 			replacements = append(replacements, k, v)
 		} else {
 			// Map between configured URL and site URL
-			replacements = append(replacements, k, viper.GetString(config.SiteURL))
+			replacements = append(replacements, k, settings.SiteURL)
 		}
 	}
 
 	return strings.NewReplacer(replacements...)
 }
 
-func loadSpecsByDir() (map[string][]byte, error) {
-	if viper.GetString(config.SpecDir) == "" {
+func loadSpecsByDir(settings config.Settings) (map[string][]byte, error) {
+	if settings.SpecDir == "" {
 		log().Info("- No local specifications to serve")
 
 		return map[string][]byte{}, nil
 	}
 
-	base, err := filepath.Abs(filepath.Clean(viper.GetString(config.SpecDir)))
+	base, err := filepath.Abs(filepath.Clean(settings.SpecDir))
 	if err != nil {
 		return nil, fmt.Errorf("form specification path: %w", err)
 	}

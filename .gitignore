@@ -118,4 +118,7 @@ Godeps/_workspace/
 /src
 tmp/
 .tmp/
+node_modules/
+test-results/
+playwright-report/
 dapperdox*

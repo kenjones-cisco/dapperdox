@@ -25,7 +25,6 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/logger"
@@ -35,6 +34,11 @@ import (
 
 // Register creates routes for each home handler.
 func Register(r *mux.Router, renderer *render.Context) {
+	RegisterWithConfig(r, renderer, config.Snapshot())
+}
+
+// RegisterWithConfig registers homes using this application's settings.
+func RegisterWithConfig(r *mux.Router, renderer *render.Context, settings config.Settings) {
 	log().Debug("registering handlers for home page")
 
 	// Homepages for each loaded specification
@@ -53,7 +57,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 		})
 	}
 
-	if len(renderer.Suite.Specifications) == 1 && !viper.GetBool(config.ForceSpecList) {
+	if len(renderer.Suite.Specifications) == 1 && !settings.ForceSpecList {
 		// If there is only one specification loaded, then hotwire '/' to redirect to the
 		// specification summary page unless DapperDox is configured to show the specification list page.
 		r.Path("/").Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

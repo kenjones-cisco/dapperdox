@@ -72,9 +72,12 @@ func run() error {
 		os.Exit(0)
 	}
 
-	config.Init()
+	settings, loadErr := config.Load()
+	if loadErr != nil {
+		return loadErr
+	}
 
-	if err := log.SetLevel(viper.GetString(config.LogLevel)); err != nil {
+	if err := log.SetLevel(settings.LogLevel); err != nil {
 		return err
 	}
 
@@ -82,15 +85,15 @@ func run() error {
 
 	var management http.Handler
 
-	if viper.GetBool(config.DiscoveryEnabled) {
+	if settings.DiscoveryEnabled {
 		// initialize auto-discovery instance
-		discoverer, err := discover.NewDiscoverer()
+		discoverer, err := discover.NewDiscovererWithConfig(settings)
 		if err != nil {
 			return fmt.Errorf("create discoverer: %w", err)
 		}
 
 		// initialize updater instance
-		updater, err := handlers.NewAutoDiscoverUpdater(discoverer)
+		updater, err := handlers.NewAutoDiscoverUpdaterWithConfig(discoverer, settings)
 		if err != nil {
 			return fmt.Errorf("initialize documentation: %w", err)
 		}
@@ -105,7 +108,7 @@ func run() error {
 	} else {
 		var err error
 
-		chain, err = handlers.NewRouterChain()
+		chain, err = handlers.NewRouterChainWithConfig(settings)
 		if err != nil {
 			return fmt.Errorf("initialize documentation: %w", err)
 		}
@@ -113,21 +116,22 @@ func run() error {
 		management = http.HandlerFunc(staticStatus)
 	}
 
-	var listener net.Listener
+	var (
+		listener net.Listener
+		err      error
+	)
 
-	var err error
-
-	if viper.GetString(config.TLSCert) != "" && viper.GetString(config.TLSKey) != "" {
-		listener, err = network.NewSecuredListener()
+	if settings.TLSCert != "" && settings.TLSKey != "" {
+		listener, err = network.NewSecuredListenerWithConfig(settings)
 	} else {
-		listener, err = network.NewListener()
+		listener, err = network.NewListenerWithConfig(settings)
 	}
 
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", viper.GetString(config.BindAddr), err)
+		return fmt.Errorf("listen on %s: %w", settings.BindAddr, err)
 	}
 
-	return serveDocumentation(listener, chain, management)
+	return serveDocumentationWithConfig(listener, chain, management, settings)
 }
 
 func staticStatus(w http.ResponseWriter, r *http.Request) {
@@ -145,8 +149,8 @@ func staticStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func serveDocumentation(listener net.Listener, chain, management http.Handler) error {
-	managementListener, err := listenManagement(viper.GetString(config.ManagementAddr))
+func serveDocumentationWithConfig(listener net.Listener, chain, management http.Handler, settings config.Settings) error {
+	managementListener, err := listenManagement(settings.ManagementAddr)
 	if err != nil {
 		_ = listener.Close()
 

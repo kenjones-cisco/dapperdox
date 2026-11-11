@@ -75,6 +75,58 @@ The built-in API proxy uses `ReverseProxy.Rewrite`: target host, path, and query
 are preserved, while incoming forwarding headers are replaced with values
 derived from the actual client request.
 
+### Compatibility tests
+
+Run the browser fixtures with Docker:
+
+```bash
+make test-browser
+```
+
+The development image installs Node, pinned Playwright/Chromium, and test-only
+jQuery; no host npm install or browser installation is needed. The browser
+suite starts a local documentation/API fixture server, intercepts external
+assets, and exercises the production explorer scripts and rendered templates.
+It covers authentication hooks, header/query API keys, Basic/Bearer precedence,
+JSON bodies, multipart uploads, and downloads. Download coverage preserves the
+existing ASCII-plus-NUL fixture, not arbitrary binary correctness.
+
+The pinned legacy jQuery matches the application's existing CDN version for
+compatibility testing; it is not a production dependency upgrade and retains
+known advisories. HTTPS assets are intercepted, so the browser tests do not
+contact third-party CDNs. The fixture normalizes the `.js` MIME type to avoid
+depending on the container's MIME database.
+
+Go HTTP fixtures in [handlers/compatibility_test.go](handlers/compatibility_test.go)
+protect public URLs, redirects, heading anchors, Markdown guides, section-overlay
+precedence, explorer markup, and specification downloads.
+
+### Configuration and parser ownership
+
+Startup loads a typed `config.Settings` once with unchanged configuration keys
+and flag > environment > file > default precedence. Configuration files remain
+optional; malformed files, booleans, and durations now fail startup explicitly.
+With discovery enabled, refresh periods/timeouts must be positive, while informer
+resync and initial delay may be zero but not negative.
+
+Application components receive detached settings through their `WithConfig`
+constructors. Viper remains the startup/legacy-constructor adapter rather than
+live request state. Changes to Viper or caller-owned maps/slices after construction
+do not reconfigure a running instance; restart to apply changes.
+
+Embedding callers can create independent parsers with `spec.NewParser(settings)`,
+then call `parser.LoadSuite()` for static files or `parser.Parse(location, raw)`
+for discovered specifications. Status-code descriptions and static rewrite rules
+belong to each parser. Invalid configured status-code tables fail construction
+instead of leaving partially initialized shared state. Static-file rewrites still
+do not apply to discovered parsing.
+
+The legacy package-level `spec.Parse`/`spec.LoadSuite` entry points snapshot
+configuration for each call. The obsolete `spec.APISuite`/`spec.APISuiteGroups`
+globals have been removed; use the returned `spec.Suite` instead.
+Rendering uses the local `render.HTMLOptions` type with the same `Layout` and
+`Funcs` fields; `unrolled/render` is no longer required.
+
 ### Running DapperDox
 
 Start up DapperDox, pointing it to your OpenAPI 2.0 specification file:

@@ -33,8 +33,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/unrolled/render"
-
+	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/render/asset"
 	"github.com/kenjones-cisco/dapperdox/spec"
@@ -43,6 +42,7 @@ import (
 const (
 	sizeTen       = 10
 	sizeSixtyFour = 64
+	currentFunc   = "current"
 )
 
 var (
@@ -55,19 +55,31 @@ var (
 // Context owns the rendering state for one immutable documentation generation.
 // Set navigation while building the generation, before publishing it.
 type Context struct {
+	settings  config.Settings
 	Suite     *spec.Suite
 	Assets    *asset.Catalog
 	templates *template.Template
 	guides    map[string]GuideType
 }
 
+// HTMLOptions overrides the default layout and request-local template functions.
+type HTMLOptions struct {
+	Layout string
+	Funcs  template.FuncMap
+}
+
 // New validates and compiles templates without changing application-global state.
 func New(suite *spec.Suite, catalog *asset.Catalog) (*Context, error) {
+	return NewWithConfig(suite, catalog, config.Snapshot())
+}
+
+// NewWithConfig compiles a renderer with detached startup settings.
+func NewWithConfig(suite *spec.Suite, catalog *asset.Catalog, settings config.Settings) (*Context, error) {
 	if suite == nil || catalog == nil {
 		return nil, errMissingCatalog
 	}
 
-	c := &Context{Suite: suite, Assets: catalog, guides: make(map[string]GuideType)}
+	c := &Context{Suite: suite, Assets: catalog, guides: make(map[string]GuideType), settings: settings.Clone()}
 	t := template.New("assets/templates").Delims("[:", ":]").Funcs(c.funcs())
 
 	for _, path := range catalog.Names() {
@@ -105,7 +117,7 @@ func (c *Context) TemplateLookup(name string) *template.Template {
 
 // HTML renders with request-local functions, sharing the same counter with nested overlays.
 // Errors are logged explicitly and incomplete template output is never sent.
-func (c *Context) HTML(w io.Writer, status int, name string, binding any, htmlOpt ...render.HTMLOptions) {
+func (c *Context) HTML(w io.Writer, status int, name string, binding any, htmlOpt ...HTMLOptions) {
 	if response, ok := w.(http.ResponseWriter); ok {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "text/html; charset=UTF-8")
@@ -152,13 +164,13 @@ func (c *Context) funcs() template.FuncMap {
 		"overlay":       func(string, ...any) (template.HTML, error) { return "", nil },
 		"getAssetPaths": func(s string, d ...any) []string { return getAssetPaths(s, d) },
 		"yield":         func() (template.HTML, error) { return "", errYieldWithoutLayout },
-		"current":       func() string { return "" },
+		currentFunc:     func() string { return "" },
 		"partial":       func(string) (template.HTML, error) { return "", nil },
 		"block":         func(string) (template.HTML, error) { return "", nil },
 	}
 }
 
-func (c *Context) html(name string, binding any, htmlOpt ...render.HTMLOptions) ([]byte, error) {
+func (c *Context) html(name string, binding any, htmlOpt ...HTMLOptions) ([]byte, error) {
 	t, err := c.templates.Clone()
 	if err != nil {
 		return nil, err
@@ -183,9 +195,9 @@ func (c *Context) html(name string, binding any, htmlOpt ...render.HTMLOptions) 
 
 			return counter
 		},
-		"overlay": func(n string, data ...any) (template.HTML, error) { return overlayFunc(t, n, data) },
-		"yield":   func() (template.HTML, error) { return execute(name, binding) },
-		"current": func() string { return name },
+		"overlay":   func(n string, data ...any) (template.HTML, error) { return overlayFunc(t, n, data) },
+		"yield":     func() (template.HTML, error) { return execute(name, binding) },
+		currentFunc: func() string { return name },
 		"partial": func(partial string) (template.HTML, error) {
 			target := partial + "-" + name
 			if t.Lookup(target) == nil {
