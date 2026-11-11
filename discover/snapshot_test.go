@@ -2,10 +2,19 @@ package discover
 
 import (
 	"bytes"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
+
+	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover/models"
 )
 
@@ -310,6 +319,105 @@ func TestRunKeepsUnsynchronizedInventoryUnavailable(t *testing.T) {
 	}
 
 	d.Shutdown()
+}
+
+func TestShutdownCancelsSpecFetch(t *testing.T) {
+	oldTimeout := viper.GetDuration(config.DiscoverySpecLoadTimeout)
+	oldRewrites := viper.GetString(config.SpecRewrites)
+	viper.Set(config.DiscoverySpecLoadTimeout, time.Minute)
+	viper.Set(config.SpecRewrites, "")
+
+	defer viper.Set(config.DiscoverySpecLoadTimeout, oldTimeout)
+	defer viper.Set(config.SpecRewrites, oldRewrites)
+
+	for _, blockBody := range []bool{false, true} {
+		t.Run(fmt.Sprintf("block_body_%t", blockBody), func(t *testing.T) {
+			entered := make(chan struct{})
+			canceled := make(chan struct{})
+			release := make(chan struct{})
+
+			var requests atomic.Int32
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if requests.Add(1) == 1 {
+					if blockBody {
+						w.WriteHeader(http.StatusOK)
+						w.(http.Flusher).Flush()
+					}
+
+					close(entered)
+					select {
+					case <-r.Context().Done():
+						close(canceled)
+					case <-release:
+					}
+				}
+			}))
+			defer server.Close()
+			defer close(release)
+
+			host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			port, err := strconv.Atoi(portText)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			service := &models.Service{
+				Hostname: host,
+				Ports: models.PortList{
+					{Protocol: models.ProtocolHTTP, Port: port},
+					{Protocol: models.ProtocolHTTP, Port: port},
+				},
+			}
+			d := newSnapshotTestDiscoverer()
+			d.services = &snapshotTestWatcher{ready: true}
+			d.data.services.Insert(service)
+			d.apis[host] = APIStatus{}
+			d.Run()
+
+			defer d.Shutdown()
+
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("discovery did not start fetching")
+			}
+
+			before := d.Snapshot()
+			done := make(chan struct{})
+
+			go func() {
+				d.Shutdown()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				// Release the blocked handler before deferred shutdown waits.
+				server.CloseClientConnections()
+				t.Fatal("shutdown did not cancel the in-flight specification fetch")
+			}
+
+			select {
+			case <-canceled:
+			case <-time.After(time.Second):
+				t.Fatal("specification request context was not canceled")
+			}
+
+			if got := requests.Load(); got != 1 {
+				t.Fatalf("shutdown fetched remaining ports: got %d requests, want 1", got)
+			}
+
+			if after := d.Snapshot(); after.Revision != before.Revision || after.APIs[host] != before.APIs[host] {
+				t.Fatalf("shutdown published a canceled refresh: before %+v, after %+v", before, after)
+			}
+		})
+	}
 }
 
 func newSnapshotTestDiscoverer() *Discoverer {

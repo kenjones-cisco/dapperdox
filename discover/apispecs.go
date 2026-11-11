@@ -1,8 +1,11 @@
 package discover
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -24,7 +27,7 @@ const (
 )
 
 func (d *Discoverer) fetchAPISpecs() map[string][]byte {
-	specs, _ := fetchAPIResults(d.data.services.List())
+	specs, _ := fetchAPIResults(d.fetchContext(), d.data.services.List())
 	if len(specs) == 0 {
 		return nil
 	}
@@ -32,7 +35,7 @@ func (d *Discoverer) fetchAPISpecs() map[string][]byte {
 	return specs
 }
 
-func fetchAPIResults(services []*models.Service) (map[string][]byte, map[string]string) {
+func fetchAPIResults(ctx context.Context, services []*models.Service) (map[string][]byte, map[string]string) {
 	newSpecs := make(map[string][]byte)
 	failures := make(map[string]string)
 	active := make(map[string]struct{})
@@ -62,6 +65,12 @@ func fetchAPIResults(services []*models.Service) (map[string][]byte, map[string]
 		}
 
 		for _, port := range service.Ports {
+			if ctx.Err() != nil {
+				log().Debug("specification refresh canceled")
+
+				return newSpecs, failures
+			}
+
 			if !port.Protocol.IsHTTP() {
 				continue
 			}
@@ -69,8 +78,14 @@ func fetchAPIResults(services []*models.Service) (map[string][]byte, map[string]
 			hostName := service.Hostname
 			portNum := port.Port
 
-			path, data, err := handleSpec(rwd, hostName, portNum)
+			path, data, err := handleSpec(ctx, rwd, hostName, portNum)
 			if err != nil {
+				if ctx.Err() != nil {
+					log().Debug("specification refresh canceled")
+
+					return newSpecs, failures
+				}
+
 				log().Errorf("unable to load and process spec for API %q", hostName)
 
 				if _, activeAPI := active[hostName]; activeAPI {
@@ -123,8 +138,8 @@ func loadRewritesDoc() (*loads.Document, error) {
 	return rewritesDoc, nil
 }
 
-func handleSpec(rwd *loads.Document, hostName string, portNum int) (string, []byte, error) {
-	svcSpec, err := loadSpec(fmt.Sprintf("%s:%d", hostName, portNum))
+func handleSpec(ctx context.Context, rwd *loads.Document, hostName string, portNum int) (string, []byte, error) {
+	svcSpec, err := loadSpec(ctx, fmt.Sprintf("%s:%d", hostName, portNum))
 	if err != nil {
 		return "", nil, err
 	}
@@ -132,7 +147,7 @@ func handleSpec(rwd *loads.Document, hostName string, portNum int) (string, []by
 	return processSpec(hostName, rwd.Spec(), svcSpec)
 }
 
-func loadSpec(location string) (*spec.Swagger, error) {
+func loadSpec(ctx context.Context, location string) (*spec.Swagger, error) {
 	if location == "" {
 		return nil, wraperrors.New("api location has no value")
 	}
@@ -141,7 +156,7 @@ func loadSpec(location string) (*spec.Swagger, error) {
 
 	log().Debugf("apiLoader location: %s", u.String())
 
-	data, err := swag.LoadFromFileOrHTTPWithTimeout(u.String(), viper.GetDuration(config.DiscoverySpecLoadTimeout))
+	data, err := loadSpecBytes(ctx, u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +169,36 @@ func loadSpec(location string) (*spec.Swagger, error) {
 	}
 
 	return doc.Spec(), nil
+}
+
+func loadSpecBytes(ctx context.Context, location string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if swag.LoadHTTPBasicAuthUsername != "" && swag.LoadHTTPBasicAuthPassword != "" {
+		req.SetBasicAuth(swag.LoadHTTPBasicAuthUsername, swag.LoadHTTPBasicAuthPassword)
+	}
+
+	for key, value := range swag.LoadHTTPCustomHeaders {
+		req.Header.Set(key, value)
+	}
+
+	client := &http.Client{Timeout: viper.GetDuration(config.DiscoverySpecLoadTimeout)}
+
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("could not access document at %q [%s]: %w", location, response.Status, swag.ErrLoader)
+	}
+
+	return io.ReadAll(response.Body)
 }
 
 func processSpec(hostname string, rewritesSpec, svcSpec *spec.Swagger) (string, []byte, error) {

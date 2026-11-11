@@ -96,6 +96,9 @@ Configure Kubernetes probes to use these endpoints rather than a rendered guide
 page. A failed subsequent generation build retains the previous generation and
 reports the failure instead of terminating the process.
 
+Shutdown cancels in-flight specification requests and skips remaining discovery
+fetches. Interrupted refreshes do not replace the last published discovery state.
+
 Detailed current-state JSON is available at `GET /status` on the separate
 management listener, default `127.0.0.1:8081`. Configure its address with
 `--management-addr` or `MANAGEMENT_ADDR`; only literal loopback IPs are accepted.
@@ -142,6 +145,5 @@ as part of a bigger project. His commit history was lost when DapperDox was extr
 project, but its core retains his valuable work.
 
 [David Mort](https://github.com/davidmort) for painstaking testing, and bug fixing.
-
 
 

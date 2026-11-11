@@ -2,6 +2,7 @@ package discover
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/url"
 	"strconv"
@@ -334,7 +335,7 @@ func Test_apiLoader_load(t *testing.T) {
 				host = *tt.fields.hostoverride
 			}
 
-			_, err := loadSpec(host)
+			_, err := loadSpec(context.Background(), host)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("apiLoader.Load() error = %v, wantErr %v", err, tt.wantErr)
 			}

@@ -4,6 +4,7 @@ package discover
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"time"
 
@@ -21,6 +22,8 @@ const (
 
 // Discoverer represents the state of the discovery mechanism.
 type Discoverer struct {
+	fetchCtx         context.Context //nolint:containedctx // Discovery owns this context and cancels it on shutdown.
+	cancelFetch      context.CancelFunc
 	services         watcher
 	notify           func()
 	data             *state
@@ -90,6 +93,10 @@ func (d *Discoverer) Shutdown() {
 	d.lifecycleMu.Lock()
 	if !d.stopped {
 		d.stopped = true
+		if d.cancelFetch != nil {
+			d.cancelFetch()
+		}
+
 		if d.stop != nil {
 			close(d.stop)
 		}
@@ -98,6 +105,21 @@ func (d *Discoverer) Shutdown() {
 
 	d.runWG.Wait()
 	log().Info("shutting down discovery process")
+}
+
+func (d *Discoverer) fetchContext() context.Context {
+	d.lifecycleMu.Lock()
+	defer d.lifecycleMu.Unlock()
+
+	if d.fetchCtx == nil {
+		d.fetchCtx, d.cancelFetch = context.WithCancel(context.Background())
+	}
+
+	if d.stopped {
+		d.cancelFetch()
+	}
+
+	return d.fetchCtx
 }
 
 // Run starts the discovery process and waits for initial informer
@@ -236,11 +258,20 @@ func (d *Discoverer) discover() {
 	d.mu.RUnlock()
 
 	fetch := d.fetch
+	ctx := d.fetchContext()
+
 	if fetch == nil {
-		fetch = fetchAPIResults
+		fetch = func(services []*models.Service) (map[string][]byte, map[string]string) {
+			return fetchAPIResults(ctx, services)
+		}
 	}
 
 	specs, failures := fetch(services)
+
+	if ctx.Err() != nil {
+		return
+	}
+
 	now := time.Now().UTC()
 
 	d.mu.Lock()
