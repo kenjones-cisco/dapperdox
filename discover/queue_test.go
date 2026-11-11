@@ -73,3 +73,84 @@ func TestChainedHandler(t *testing.T) {
 		return nil
 	}, obj: 0})
 }
+
+func TestQueueShutdownCancelsRetryDelay(t *testing.T) {
+	q := NewQueue(time.Hour)
+	stop := make(chan struct{})
+	started := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		q.Run(stop)
+		close(done)
+	}()
+	q.Push(Task{handler: func(any, models.Event) error {
+		close(started)
+
+		return errors.New("retry")
+	}})
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("queue handler did not start")
+	}
+	close(stop)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("queue did not stop during retry delay")
+	}
+}
+
+func TestQueueIdleTracksQueuedAndActiveWork(t *testing.T) {
+	queue := NewQueue(time.Hour).(*queueImpl)
+	if !queue.Idle() {
+		t.Fatal("new queue should be idle")
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	stop := make(chan struct{})
+
+	go func() {
+		queue.Run(stop)
+		close(done)
+	}()
+	queue.Push(Task{handler: func(any, models.Event) error {
+		close(started)
+		<-release
+
+		return nil
+	}})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("queue handler did not start")
+	}
+
+	if queue.Idle() {
+		t.Fatal("queue reported idle while processing work")
+	}
+
+	close(release)
+
+	deadline := time.After(time.Second)
+
+	for !queue.Idle() {
+		select {
+		case <-time.After(time.Millisecond):
+		case <-deadline:
+			t.Fatal("queue did not return to idle")
+		}
+	}
+
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("queue did not stop")
+	}
+}

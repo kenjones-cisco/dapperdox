@@ -41,6 +41,7 @@ type queueImpl struct {
 	queue   []Task
 	delay   time.Duration
 	lock    sync.Mutex
+	active  bool
 	closing bool
 }
 
@@ -65,20 +66,32 @@ func (q *queueImpl) Push(item Task) {
 }
 
 func (q *queueImpl) Run(stop <-chan struct{}) {
-	go func() {
-		<-stop
-		q.lock.Lock()
-		q.closing = true
-		q.lock.Unlock()
-	}()
-
 	// Throttle processing up to smoothed 10 qps with bursts up to 100 qps
 	rateLimiter := flowcontrol.NewTokenBucketRateLimiter(qpsRate, qpsBurst)
 
 	var item Task
 
 	for {
+		select {
+		case <-stop:
+			q.lock.Lock()
+			q.closing = true
+			q.lock.Unlock()
+
+			return
+		default:
+		}
+
 		rateLimiter.Accept()
+		select {
+		case <-stop:
+			q.lock.Lock()
+			q.closing = true
+			q.lock.Unlock()
+
+			return
+		default:
+		}
 
 		q.lock.Lock()
 
@@ -90,19 +103,48 @@ func (q *queueImpl) Run(stop <-chan struct{}) {
 			q.lock.Unlock()
 		} else {
 			item, q.queue = q.queue[0], q.queue[1:]
+			q.active = true
 			q.lock.Unlock()
 
 			for {
 				if err := item.handler(item.obj, item.event); err != nil {
 					log().Errorf("Work item failed (%v), repeating after delay %v", err, q.delay)
 
-					time.Sleep(q.delay)
+					timer := time.NewTimer(q.delay)
+					select {
+					case <-stop:
+						if !timer.Stop() {
+							select {
+							case <-timer.C:
+							default:
+							}
+						}
+
+						q.lock.Lock()
+						q.active = false
+						q.closing = true
+						q.lock.Unlock()
+
+						return
+					case <-timer.C:
+					}
 				} else {
+					q.lock.Lock()
+					q.active = false
+					q.lock.Unlock()
+
 					break
 				}
 			}
 		}
 	}
+}
+
+func (q *queueImpl) Idle() bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	return len(q.queue) == 0 && !q.active
 }
 
 // ChainHandler applies handlers in a sequence.

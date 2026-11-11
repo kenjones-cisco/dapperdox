@@ -28,22 +28,21 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/kenjones-cisco/dapperdox/render"
-	"github.com/kenjones-cisco/dapperdox/render/asset"
 )
 
 // Register creates routes for each static resource.
-func Register(r *mux.Router) {
+func Register(r *mux.Router, renderer *render.Context) {
 	log().Debug("registering not found handler in static package")
 
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		render.HTML(w, http.StatusNotFound, "error", render.DefaultVars(req, nil, map[string]interface{}{"error": "Page not found", "code": http.StatusNotFound}))
+		renderer.HTML(w, http.StatusNotFound, "error", renderer.DefaultVars(req, nil, map[string]interface{}{"error": "Page not found", "code": http.StatusNotFound}))
 	})
 
 	log().Debug("registering static content handlers for static package")
 
 	var allow bool
 
-	for _, file := range asset.Names() {
+	for _, file := range renderer.Assets.Names() {
 		mimeType := mime.TypeByExtension(filepath.Ext(file))
 
 		if mimeType == "" {
@@ -68,7 +67,7 @@ func Register(r *mux.Router) {
 			log().Debugf("registering handler for static asset: %s", path)
 
 			r.Path(path).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				if b, err := asset.Asset("assets/static" + path); err == nil {
+				if b, err := renderer.Assets.Asset("assets/static" + path); err == nil {
 					w.Header().Set("Content-Type", mimeType)
 					w.Header().Set("Cache-control", "public, max-age=259200")
 					w.WriteHeader(http.StatusOK)
