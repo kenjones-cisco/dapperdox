@@ -20,8 +20,6 @@ func TestParseOwnedSuite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	old := APISuite
-
 	api, err := Parse("/common/api.json", raw)
 	if err != nil {
 		t.Fatal(err)
@@ -30,10 +28,6 @@ func TestParseOwnedSuite(t *testing.T) {
 	suite, err := NewSuite(map[string]*APISpecification{"common": api})
 	if err != nil || len(suite.Specifications) != 1 {
 		t.Fatalf("owned suite: %v", err)
-	}
-
-	if len(APISuite) != len(old) {
-		t.Fatal("parser published global catalog")
 	}
 
 	if _, err := NewSuite(map[string]*APISpecification{"one": api, "two": api}); err == nil {

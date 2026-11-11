@@ -1,0 +1,11 @@
+{
+  "name": "dapperdox-compatibility-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "playwright test --config tests/browser/playwright.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "jquery": "1.11.3"
+  }
+}

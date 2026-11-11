@@ -1,0 +1,47 @@
+{
+  "swagger": "2.0",
+  "info": {"title": "Compatibility API", "version": "1", "description": "A stable **documentation** contract."},
+  "basePath": "/fixture-api",
+  "tags": [{"name": "Pets", "description": "Pet operations"}],
+  "consumes": ["application/json"],
+  "produces": ["application/json"],
+  "securityDefinitions": {
+    "headerKey": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+    "queryKey": {"type": "apiKey", "in": "query", "name": "api_key"},
+    "basic": {"type": "basic"},
+    "oauth": {"type": "oauth2", "flow": "implicit", "authorizationUrl": "https://example.invalid/auth", "scopes": {}}
+  },
+  "paths": {
+    "/pets/{id}": {
+      "post": {
+        "operationId": "updatePet", "summary": "Update pet", "tags": ["Pets"],
+        "security": [{"headerKey": [], "basic": [], "oauth": []}],
+        "parameters": [
+          {"name": "id", "in": "path", "required": true, "type": "string"},
+          {"name": "filter", "in": "query", "type": "string"},
+          {"name": "payload", "in": "body", "schema": {"title": "Pet", "type": "object", "properties": {"name": {"type": "string"}}}}
+        ],
+        "responses": {"200": {"description": "Updated"}}
+      }
+    },
+    "/query": {
+      "get": {
+        "operationId": "queryPet", "summary": "Query pet", "tags": ["Pets"],
+        "security": [{"queryKey": []}], "responses": {"200": {"description": "Found"}}
+      }
+    },
+    "/upload": {
+      "post": {
+        "operationId": "uploadPet", "summary": "Upload pet", "tags": ["Pets"], "consumes": ["multipart/form-data"],
+        "parameters": [{"name": "caption", "in": "formData", "type": "string"}, {"name": "attachment", "in": "formData", "type": "file"}],
+        "responses": {"200": {"description": "Uploaded"}}
+      }
+    },
+    "/download": {
+      "get": {
+        "operationId": "downloadPet", "summary": "Download pet", "tags": ["Pets"], "produces": ["application/octet-stream"],
+        "responses": {"200": {"description": "Downloaded"}}
+      }
+    }
+  }
+}

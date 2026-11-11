@@ -38,7 +38,6 @@ import (
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag/loading"
 	"github.com/serenize/snaker"
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover"
@@ -93,14 +92,9 @@ var sortTypes = map[string]bool{
 	sortSummary:    true,
 }
 
-// APISuite holds multiple apis held by name.
-var APISuite = make(map[string]*APISpecification)
-
-// APISuiteGroups holds multiple apis sorted by groups.
-var APISuiteGroups = make(map[string][]*APISpecification)
-
 // APISpecification holds the content of a parsed api.
 type APISpecification struct {
+	parser              *Parser
 	SecurityDefinitions map[string]SecurityScheme
 	DefaultSecurity     map[string]Security
 	ResourceList        map[string]map[string]*Resource // Version->ResourceName->Resource
@@ -256,61 +250,36 @@ func (a SortMethods) Len() int           { return len(a) }
 func (a SortMethods) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a SortMethods) Less(i, j int) bool { return a[i].SortKey < a[j].SortKey }
 
-// LoadSpecifications loads the provided api specifications.
+// LoadSpecifications validates the provided API specifications without publishing globals.
+//
+// Deprecated: use Parser.LoadSuite or Parser.Parse to obtain parsed specifications.
 func LoadSpecifications(d discover.DiscoveryManager) (bool, error) {
-	loadStatusCodes()
-	loadReplacer()
+	p, err := NewParser(config.Snapshot())
+	if err != nil {
+		return false, err
+	}
 
-	as := make(map[string]*APISpecification)
-	asg := make(map[string][]*APISpecification)
+	var docs map[string]*loads.Document
 
-	var (
-		newspecs bool
-		docs     map[string]*loads.Document
-		err      error
-	)
-
-	if viper.GetBool(config.DiscoveryEnabled) {
+	if p.settings.DiscoveryEnabled {
 		docs, err = getDocsByDiscovery(d)
 	} else {
-		docs, err = getDocsByDir()
+		docs, err = p.getDocsByDir()
 	}
 
 	if err != nil {
-		return newspecs, err
+		return false, err
 	}
 
 	for specLocation, doc := range docs {
-		var (
-			ok            bool
-			specification *APISpecification
-		)
-
-		if specification, ok = as[""]; !ok {
-			specification = &APISpecification{}
+		if _, err := p.parseDocument(specLocation, doc); err != nil {
+			return false, err
 		}
-
-		specification.load(specLocation, doc)
-
-		as[specification.ID] = specification
-
-		if _, exists := asg[specification.GroupBy]; !exists {
-			asg[specification.GroupBy] = make([]*APISpecification, 0)
-		}
-
-		asg[specification.GroupBy] = append(asg[specification.GroupBy], specification)
 	}
 
-	log().Info(fmt.Sprintf("loaded [%d] specifications to API spec suite maps", len(as)))
+	log().Info(fmt.Sprintf("validated [%d] specifications", len(docs)))
 
-	if len(as) > 0 {
-		APISuite = as
-		APISuiteGroups = asg
-
-		newspecs = true
-	}
-
-	return newspecs, nil
+	return len(docs) > 0, nil
 }
 
 func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document, error) {
@@ -340,15 +309,15 @@ func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document
 	return docs, nil
 }
 
-func getDocsByDir() (map[string]*loads.Document, error) {
-	log().Info(fmt.Sprintf("configured spec filenames: %v", viper.GetStringSlice(config.SpecFilename)))
+func (p *Parser) getDocsByDir() (map[string]*loads.Document, error) {
+	log().Info(fmt.Sprintf("configured spec filenames: %v", p.settings.SpecFilename))
 
 	docs := make(map[string]*loads.Document)
 
-	for _, specLocation := range viper.GetStringSlice(config.SpecFilename) {
+	for _, specLocation := range p.settings.SpecFilename {
 		log().Info(fmt.Sprintf("specLocation: %s", specLocation))
 
-		document, err := loadSpec(normalizeSpecLocation(specLocation))
+		document, err := p.loadSpec(p.normalizeSpecLocation(specLocation))
 		if err != nil {
 			return nil, err
 		}
@@ -380,7 +349,7 @@ func (c *APISpecification) load(specLocation string, document *loads.Document) {
 
 	host := apispec.Host
 	if host == "" {
-		host = viper.GetString(config.SpecDefaultHost)
+		host = c.parser.settings.SpecDefaultHost
 	}
 
 	u := &url.URL{
@@ -712,7 +681,7 @@ func (c *APISpecification) populateMethod(api *APIGroup, pathItem *spec.PathItem
 		}
 
 		rsp := c.buildResponse(&response, method, version)
-		rsp.StatusDescription = httpStatusDescription(status)
+		rsp.StatusDescription = c.parser.statusCodes[status]
 		method.Responses[status] = *rsp
 	}
 
@@ -1380,7 +1349,7 @@ func camelToKebab(s string) string {
 	return strings.ReplaceAll(snaker.CamelToSnake(s), "_", "-")
 }
 
-func loadSpec(location string) (*loads.Document, error) {
+func (p *Parser) loadSpec(location string) (*loads.Document, error) {
 	log().Info(fmt.Sprintf("Importing OpenAPI specifications from %s", location))
 
 	raw, err := loading.LoadFromFileOrHTTP(location)
@@ -1390,7 +1359,7 @@ func loadSpec(location string) (*loads.Document, error) {
 		return nil, err
 	}
 
-	document, err := loads.Analyzed(json.RawMessage(replace(raw)), "")
+	document, err := loads.Analyzed(json.RawMessage(p.replacer.Replace(string(raw))), "")
 	if err != nil {
 		log().Error(fmt.Sprintf("Error: go-openapi/loads failed to analyze spec: %s", err))
 
@@ -1425,11 +1394,11 @@ func isLocalSpecURL(specURL string) bool {
 	return !match
 }
 
-func normalizeSpecLocation(specLocation string) string {
+func (p *Parser) normalizeSpecLocation(specLocation string) string {
 	if isLocalSpecURL(specLocation) {
-		log().Debug(fmt.Sprintf("SpecDir = %s", viper.GetString(config.SpecDir)))
+		log().Debug(fmt.Sprintf("SpecDir = %s", p.settings.SpecDir))
 
-		base, err := filepath.Abs(viper.GetString(config.SpecDir))
+		base, err := filepath.Abs(p.settings.SpecDir)
 		if err != nil {
 			log().Error(fmt.Sprintf("Error forming specification path: %s", err))
 		}

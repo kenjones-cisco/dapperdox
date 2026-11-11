@@ -15,7 +15,6 @@ import (
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
 	"github.com/go-openapi/swag/loading"
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover/models"
@@ -36,8 +35,10 @@ var (
 	errMissingServiceSpec = errors.New("service spec should not be nil")
 )
 
+type specLoader struct{ settings config.Settings }
+
 func (d *Discoverer) fetchAPISpecs() map[string][]byte {
-	specs, _ := fetchAPIResults(d.fetchContext(), d.data.services.List())
+	specs, _ := d.loader().fetchAPIResults(d.fetchContext(), d.data.services.List())
 	if len(specs) == 0 {
 		return nil
 	}
@@ -45,18 +46,18 @@ func (d *Discoverer) fetchAPISpecs() map[string][]byte {
 	return specs
 }
 
-func fetchAPIResults(ctx context.Context, services []*models.Service) (newSpecs map[string][]byte, failures map[string]string) {
+func (l specLoader) fetchAPIResults(ctx context.Context, services []*models.Service) (newSpecs map[string][]byte, failures map[string]string) {
 	newSpecs = make(map[string][]byte)
 	failures = make(map[string]string)
 	active := make(map[string]struct{})
 
 	for _, service := range services {
-		for key := range serviceAPIKeys(service) {
+		for key := range serviceAPIKeysWithConfig(service, l.settings) {
 			active[key] = struct{}{}
 		}
 	}
 
-	rwd, err := loadRewritesDoc()
+	rwd, err := l.loadRewritesDoc()
 	if err != nil {
 		log().ErrorContext(ctx, "unable to load rewrites doc")
 
@@ -68,13 +69,13 @@ func fetchAPIResults(ctx context.Context, services []*models.Service) (newSpecs 
 	}
 
 	for _, service := range services {
-		if service.Hostname == "" || isIgnoredSvc(service.Hostname) {
+		if service.Hostname == "" || l.isIgnoredSvc(service.Hostname) {
 			log().WarnContext(ctx, fmt.Sprintf("invalid service %q", service.Hostname))
 
 			continue
 		}
 
-		fetchServiceResults(ctx, rwd, service, newSpecs, failures)
+		l.fetchServiceResults(ctx, rwd, service, newSpecs, failures)
 
 		if ctx.Err() != nil {
 			return newSpecs, failures
@@ -96,7 +97,7 @@ func fetchAPIResults(ctx context.Context, services []*models.Service) (newSpecs 
 	return newSpecs, failures
 }
 
-func fetchServiceResults(ctx context.Context, rewrites *loads.Document, service *models.Service, specs map[string][]byte, failures map[string]string) {
+func (l specLoader) fetchServiceResults(ctx context.Context, rewrites *loads.Document, service *models.Service, specs map[string][]byte, failures map[string]string) {
 	for _, port := range service.Ports {
 		if ctx.Err() != nil {
 			log().DebugContext(ctx, "specification refresh canceled")
@@ -108,7 +109,7 @@ func fetchServiceResults(ctx context.Context, rewrites *loads.Document, service 
 			continue
 		}
 
-		path, data, err := handleSpec(ctx, rewrites, service.Hostname, port.Port)
+		path, data, err := l.handleSpec(ctx, rewrites, service.Hostname, port.Port)
 		if err != nil {
 			if ctx.Err() != nil {
 				log().DebugContext(ctx, "specification refresh canceled")
@@ -127,15 +128,15 @@ func fetchServiceResults(ctx context.Context, rewrites *loads.Document, service 
 	}
 }
 
-func loadRewritesDoc() (*loads.Document, error) {
+func (l specLoader) loadRewritesDoc() (*loads.Document, error) {
 	// if there are rewrite configuration defined,
 	// ensure we are able to load them
 	var rewritesDoc *loads.Document
 
-	if viper.GetString(config.SpecRewrites) != "" {
-		log().Info(viper.GetString(config.SpecRewrites))
+	if l.settings.SpecRewrites != "" {
+		log().Info(l.settings.SpecRewrites)
 
-		data, err := loading.YAMLDoc(viper.GetString(config.SpecRewrites))
+		data, err := loading.YAMLDoc(l.settings.SpecRewrites)
 		if err != nil {
 			return rewritesDoc, err
 		}
@@ -149,16 +150,20 @@ func loadRewritesDoc() (*loads.Document, error) {
 	return rewritesDoc, nil
 }
 
-func handleSpec(ctx context.Context, rwd *loads.Document, hostName string, portNum int) (path string, data []byte, err error) {
-	svcSpec, err := loadSpec(ctx, fmt.Sprintf("%s:%d", hostName, portNum))
+func (l specLoader) handleSpec(ctx context.Context, rwd *loads.Document, hostName string, portNum int) (path string, data []byte, err error) {
+	svcSpec, err := l.loadSpec(ctx, fmt.Sprintf("%s:%d", hostName, portNum))
 	if err != nil {
 		return "", nil, err
 	}
 
-	return processSpec(hostName, rwd.Spec(), svcSpec)
+	return l.processSpec(hostName, rwd.Spec(), svcSpec)
 }
 
 func loadSpec(ctx context.Context, location string) (*spec.Swagger, error) {
+	return (specLoader{config.Snapshot()}).loadSpec(ctx, location)
+}
+
+func (l specLoader) loadSpec(ctx context.Context, location string) (*spec.Swagger, error) {
 	if location == "" {
 		return nil, errMissingAPILocation
 	}
@@ -167,7 +172,7 @@ func loadSpec(ctx context.Context, location string) (*spec.Swagger, error) {
 
 	log().DebugContext(ctx, fmt.Sprintf("apiLoader location: %s", u.String()))
 
-	data, err := loadSpecBytes(ctx, u.String())
+	data, err := l.loadSpecBytes(ctx, u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -182,13 +187,13 @@ func loadSpec(ctx context.Context, location string) (*spec.Swagger, error) {
 	return doc.Spec(), nil
 }
 
-func loadSpecBytes(ctx context.Context, location string) ([]byte, error) {
+func (l specLoader) loadSpecBytes(ctx context.Context, location string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
 
-	client := &http.Client{Timeout: viper.GetDuration(config.DiscoverySpecLoadTimeout)}
+	client := &http.Client{Timeout: l.settings.DiscoverySpecLoadTimeout}
 
 	response, err := client.Do(req)
 	if err != nil {
@@ -205,6 +210,10 @@ func loadSpecBytes(ctx context.Context, location string) ([]byte, error) {
 }
 
 func processSpec(hostname string, rewritesSpec, svcSpec *spec.Swagger) (path string, data []byte, err error) {
+	return (specLoader{config.Snapshot()}).processSpec(hostname, rewritesSpec, svcSpec)
+}
+
+func (l specLoader) processSpec(hostname string, rewritesSpec, svcSpec *spec.Swagger) (path string, data []byte, err error) {
 	if svcSpec == nil {
 		return "", nil, errMissingServiceSpec
 	}
@@ -213,7 +222,7 @@ func processSpec(hostname string, rewritesSpec, svcSpec *spec.Swagger) (path str
 
 	removePrivateDefinitions(svcSpec)
 
-	applyGrouping(svcSpec)
+	l.applyGrouping(svcSpec)
 
 	if rewritesSpec != nil {
 		applyRewrites(rewritesSpec, svcSpec)
@@ -284,7 +293,7 @@ func removePrivateDefinitions(svcSpec *spec.Swagger) {
 	}
 }
 
-func applyGrouping(svcSpec *spec.Swagger) {
+func (l specLoader) applyGrouping(svcSpec *spec.Swagger) {
 	// create extensions if non exist
 	if svcSpec.Extensions == nil {
 		svcSpec.Extensions = make(map[string]any)
@@ -294,9 +303,9 @@ func applyGrouping(svcSpec *spec.Swagger) {
 	// matching the provided grouping key located at the spec's root-level extensions
 	var isGrouped bool
 
-	if gkey := viper.GetString(config.DiscoveryGroupingKey); gkey != "" {
+	if gkey := l.settings.DiscoveryGroupingKey; gkey != "" {
 		if gval, ok := svcSpec.Extensions[gkey]; ok {
-			if newgval, ok := viper.GetStringMapString(config.DiscoveryGroupingConverters)[gval.(string)]; ok {
+			if newgval, ok := l.settings.DiscoveryGroupingConverters[gval.(string)]; ok {
 				svcSpec.Extensions.Add(extKeyGroupBy, newgval)
 
 				isGrouped = true
@@ -310,7 +319,7 @@ func applyGrouping(svcSpec *spec.Swagger) {
 
 	// set custom grouping extension if defined
 	for _, tag := range svcSpec.Tags {
-		if customgroup, ok := viper.GetStringMapString(config.SpecGroupings)[tag.Name]; ok {
+		if customgroup, ok := l.settings.SpecGroupings[tag.Name]; ok {
 			svcSpec.Extensions.Add(extKeyGroupBy, customgroup)
 		}
 	}
@@ -344,8 +353,8 @@ func isPrivate(exts spec.Extensions) bool {
 	return false
 }
 
-func isIgnoredSvc(name string) bool {
-	for _, ignore := range viper.GetStringSlice(config.DiscoveryServiceIgnoreList) {
+func (l specLoader) isIgnoredSvc(name string) bool {
+	for _, ignore := range l.settings.DiscoveryServiceIgnoreList {
 		if strings.HasPrefix(name, ignore) {
 			return true
 		}

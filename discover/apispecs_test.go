@@ -227,6 +227,8 @@ func Test_fetchAPISpecs(t *testing.T) {
 				defer viper.Set(config.SpecRewrites, prevRewrites)
 			}
 
+			d.settings = config.Snapshot()
+
 			specs := d.fetchAPISpecs()
 			if len(specs) != tt.want {
 				t.Errorf("discover.fetchAPISpecs() = %v, wantErr %v", len(specs), tt.want)

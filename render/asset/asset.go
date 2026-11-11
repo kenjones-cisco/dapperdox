@@ -14,8 +14,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/spf13/viper"
-
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/formatter"
 )
@@ -23,6 +21,7 @@ import (
 // Catalog owns assets, metadata and markdown rules for one application lifetime.
 // Construct it once before building documentation generations.
 type Catalog struct {
+	settings      config.Settings
 	bindata       map[string][]byte
 	metadata      map[string]map[string]string
 	guideReplacer *strings.Replacer
@@ -40,9 +39,14 @@ var (
 // NewCatalog reads all configured assets, including sections for APIs not yet discovered.
 // Earlier directories win, matching the theme and overlay precedence.
 func NewCatalog() (*Catalog, error) {
-	c := &Catalog{bindata: make(map[string][]byte), metadata: make(map[string]map[string]string)}
+	return NewCatalogWithConfig(config.Snapshot())
+}
 
-	rewrite := viper.GetStringMapString(config.DocumentRewriteURL)
+// NewCatalogWithConfig compiles assets using detached startup settings.
+func NewCatalogWithConfig(settings config.Settings) (*Catalog, error) {
+	c := &Catalog{bindata: make(map[string][]byte), metadata: make(map[string]map[string]string), settings: settings.Clone()}
+
+	rewrite := c.settings.DocumentRewriteURL
 
 	const rewritePairSize = 2
 
@@ -64,7 +68,7 @@ func NewCatalog() (*Catalog, error) {
 		return nil, err
 	}
 
-	for _, src := range catalogSources() {
+	for _, src := range catalogSources(c.settings) {
 		if strings.HasSuffix(src.dir, string(filepath.Separator)+"sections") {
 			if err := c.compileSections(src.dir); err != nil {
 				return nil, err
@@ -88,9 +92,9 @@ const (
 	assetPrefix    = "assets"
 )
 
-func catalogSources() []assetSource {
-	custom, defaults := viper.GetString(config.AssetsDir), viper.GetString(config.DefaultAssetsDir)
-	theme := viper.GetString(config.Theme)
+func catalogSources(settings config.Settings) []assetSource {
+	custom, defaults := settings.AssetsDir, settings.DefaultAssetsDir
+	theme := settings.Theme
 
 	var sources []assetSource
 
@@ -109,7 +113,7 @@ func catalogSources() []assetSource {
 
 	if theme != "" {
 		dir := filepath.Join(defaults, "themes")
-		if override := viper.GetString(config.ThemeDir); override != "" {
+		if override := settings.ThemeDir; override != "" {
 			dir = override
 		}
 
@@ -337,16 +341,16 @@ func splitOnSection(text string) (sections, headings []string) {
 
 func (c *Catalog) compileGFMMap() error {
 	var candidates []string
-	if dir := viper.GetString(config.AssetsDir); dir != "" {
+	if dir := c.settings.AssetsDir; dir != "" {
 		candidates = append(candidates, filepath.Join(dir, "gfm.map"))
 	}
 
-	theme := viper.GetString(config.Theme)
-	if dir := viper.GetString(config.ThemeDir); dir != "" {
+	theme := c.settings.Theme
+	if dir := c.settings.ThemeDir; dir != "" {
 		candidates = append(candidates, filepath.Join(dir, theme, "gfm.map"))
 	}
 
-	defaults := viper.GetString(config.DefaultAssetsDir)
+	defaults := c.settings.DefaultAssetsDir
 	candidates = append(candidates, filepath.Join(defaults, "themes", theme, "gfm.map"), filepath.Join(defaults, "themes", "default", "gfm.map"))
 	// Replace rather than append, even if a builder compiles its rules twice.
 	var rules []*gfmReplacer

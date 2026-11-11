@@ -13,7 +13,6 @@ import (
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/justinas/nosurf"
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/handlers/guides"
@@ -34,17 +33,29 @@ var errDuplicateRoute = errors.New("duplicate route")
 
 // NewRouterChain creates a router with a chain of middlewares that acts as an http.Handler.
 func NewRouterChain() (http.Handler, error) {
-	catalog, err := asset.NewCatalog()
+	return NewRouterChainWithConfig(config.Snapshot())
+}
+
+// NewRouterChainWithConfig creates a router from immutable startup settings.
+func NewRouterChainWithConfig(settings config.Settings) (http.Handler, error) {
+	settings = settings.Clone()
+
+	catalog, err := asset.NewCatalogWithConfig(settings)
 	if err != nil {
 		return nil, err
 	}
 
-	suite, err := spec.LoadSuite()
+	parser, err := spec.NewParser(settings)
 	if err != nil {
 		return nil, err
 	}
 
-	generation, err := buildGeneration(suite, nil, catalog)
+	suite, err := parser.LoadSuite()
+	if err != nil {
+		return nil, err
+	}
+
+	generation, err := buildGenerationWithConfig(suite, nil, catalog, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -60,15 +71,15 @@ func NewRouterChain() (http.Handler, error) {
 	}), nil
 }
 
-func createMiddlewareRouter(renderer *render.Context) *mux.Router {
+func createMiddlewareRouter(renderer *render.Context, settings config.Settings) *mux.Router {
 	router := mux.NewRouter()
 	router.Use(
 		handlers.RecoveryHandler(handlers.RecoveryLogger(recoveryLogger{}), handlers.PrintRecoveryStack(true)),
 		withLogger,
 		func(h http.Handler) http.Handler { return timeoutHandler(renderer, h) },
 		func(h http.Handler) http.Handler { return withCsrf(renderer, h) },
-		injectHeaders,
-		handlers.CORS(handlers.AllowedOrigins(viper.GetStringSlice(config.AllowOrigin))),
+		func(h http.Handler) http.Handler { return injectHeadersWithConfig(h, settings) },
+		handlers.CORS(handlers.AllowedOrigins(settings.AllowOrigin)),
 	)
 
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
@@ -82,15 +93,15 @@ func (recoveryLogger) Println(values ...any) {
 	log.Logger().Error("HTTP handler panic", slog.String("details", fmt.Sprintln(values...)))
 }
 
-func buildGeneration(suite *spec.Suite, raw map[string][]byte, catalog *asset.Catalog) (*generation, error) {
-	renderer, err := render.New(suite, catalog)
+func buildGenerationWithConfig(suite *spec.Suite, raw map[string][]byte, catalog *asset.Catalog, settings config.Settings) (*generation, error) {
+	renderer, err := render.NewWithConfig(suite, catalog, settings)
 	if err != nil {
 		return nil, err
 	}
 
-	router := createMiddlewareRouter(renderer)
+	router := createMiddlewareRouter(renderer, settings)
 
-	err = specs.Register(router, raw)
+	err = specs.RegisterWithConfig(router, raw, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +114,8 @@ func buildGeneration(suite *spec.Suite, raw map[string][]byte, catalog *asset.Ca
 	}
 
 	static.Register(router, renderer)
-	home.Register(router, renderer)
-	proxy.Register(router)
+	home.RegisterWithConfig(router, renderer, settings)
+	proxy.RegisterWithConfig(router, settings)
 
 	count := 0
 	paths := make(map[string]bool)
@@ -159,8 +170,8 @@ func timeoutHandler(renderer *render.Context, h http.Handler) http.Handler {
 
 // Handle additional headers such as strict transport security for TLS, and
 // giving the Server name.
-func injectHeaders(h http.Handler) http.Handler {
-	tlsEnabled := viper.GetString(config.TLSCert) != "" && viper.GetString(config.TLSKey) != ""
+func injectHeadersWithConfig(h http.Handler, settings config.Settings) http.Handler {
+	tlsEnabled := settings.TLSCert != "" && settings.TLSKey != ""
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Server", fmt.Sprintf("%s %s", version.ProductName, version.Version))

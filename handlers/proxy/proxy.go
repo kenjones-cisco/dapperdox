@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/logger"
@@ -47,9 +46,14 @@ func (r *responseCapture) WriteHeader(status int) {
 
 // Register handles registering paths to proxy.
 func Register(r *mux.Router) {
+	RegisterWithConfig(r, config.Snapshot())
+}
+
+// RegisterWithConfig registers configured API proxies.
+func RegisterWithConfig(r *mux.Router, settings config.Settings) {
 	log().Debug("Registering proxied paths:")
 
-	for k, v := range viper.GetStringMapString(config.ProxyPath) {
+	for k, v := range settings.ProxyPath {
 		register(r, k, v)
 	}
 

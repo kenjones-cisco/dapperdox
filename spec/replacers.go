@@ -1,35 +1,32 @@
 package spec
 
 import (
+	"slices"
 	"strings"
-
-	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 )
 
-var specReplacer *strings.Replacer
+const rewritePairSize = 2
 
-func loadReplacer() {
-	// Build a replacer to search/replace specification URLs
-	if specReplacer == nil {
-		var replacements []string
+func newReplacer(settings config.Settings) *strings.Replacer {
+	keys := make([]string, 0, len(settings.SpecRewriteURL))
+	for key := range settings.SpecRewriteURL {
+		keys = append(keys, key)
+	}
 
-		// Configure the replacer with key=value pairs
-		for k, v := range viper.GetStringMapString(config.SpecRewriteURL) {
-			if v != "" {
-				// Map between configured to=from URL pair
-				replacements = append(replacements, k, v)
-			} else {
-				// Map between configured URL and site URL
-				replacements = append(replacements, k, viper.GetString(config.SiteURL))
-			}
+	slices.Sort(keys)
+
+	replacements := make([]string, 0, rewritePairSize*len(keys))
+
+	for _, key := range keys {
+		value := settings.SpecRewriteURL[key]
+		if value == "" {
+			value = settings.SiteURL
 		}
 
-		specReplacer = strings.NewReplacer(replacements...)
+		replacements = append(replacements, key, value)
 	}
-}
 
-func replace(data []byte) []byte {
-	return []byte(specReplacer.Replace(string(data)))
+	return strings.NewReplacer(replacements...)
 }

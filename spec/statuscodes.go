@@ -20,100 +20,62 @@ package spec
 
 import (
 	"bufio"
-	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
-
-	"github.com/spf13/viper"
-
-	"github.com/kenjones-cisco/dapperdox/config"
-	"github.com/kenjones-cisco/dapperdox/logger"
+	"strings"
 )
 
-var (
-	statusMapSplit = regexp.MustCompile(",")
-	statusCodes    map[int]string
-)
+func (p *Parser) loadStatusCodes() error {
+	p.statusCodes = make(map[int]string)
 
-// loadStatusCodes loads status code mappings.
-func loadStatusCodes() {
-	statusfile := statusCodeFile()
-
-	if statusfile == "" {
-		log().Log(context.Background(), logger.LevelTrace, "No status code map file found.")
-
-		return
+	var candidates []string
+	if p.settings.AssetsDir != "" {
+		candidates = append(candidates, filepath.Join(p.settings.AssetsDir, "status_codes.csv"))
 	}
 
-	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Processing HTTP status code file: %s", statusfile))
-
-	file, err := os.Open(statusfile) //nolint:gosec // This path is selected from operator-configured asset directories.
-	if err != nil {
-		log().Error(fmt.Sprintf("Error: %s", err))
-
-		return
+	if p.settings.ThemeDir != "" {
+		candidates = append(candidates, filepath.Join(p.settings.ThemeDir, p.settings.Theme, "status_codes.csv"))
 	}
-	defer file.Close()
 
-	statusCodes = make(map[int]string)
-
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		indexes := statusMapSplit.FindStringIndex(line)
-		if indexes == nil {
-			return
-		}
-
-		i, err := strconv.Atoi(line[0 : indexes[1]-1])
-		if err != nil {
-			log().Error(fmt.Sprintf("Invalid HTTP status code in csv file: %q", line))
-
+	candidates = append(candidates,
+		filepath.Join(p.settings.DefaultAssetsDir, "themes", p.settings.Theme, "status_codes.csv"),
+		filepath.Join(p.settings.DefaultAssetsDir, "themes", "default", "status_codes.csv"))
+	for _, path := range candidates {
+		file, err := os.Open(path) //nolint:gosec // Paths come from operator-configured asset directories.
+		if os.IsNotExist(err) {
 			continue
 		}
 
-		statusCodes[i] = line[indexes[1]:]
-	}
-
-	if err := scanner.Err(); err != nil {
-		log().Error(fmt.Sprintf("Error: %s", err))
-	}
-}
-
-func statusCodeFile() string {
-	var candidates []string
-
-	if assets := viper.GetString(config.AssetsDir); assets != "" {
-		candidates = append(candidates, filepath.Join(assets, "status_codes.csv"))
-	}
-
-	theme := viper.GetString(config.Theme)
-	if themeDir := viper.GetString(config.ThemeDir); themeDir != "" {
-		candidates = append(candidates, filepath.Join(themeDir, theme, "status_codes.csv"))
-	}
-
-	defaults := viper.GetString(config.DefaultAssetsDir)
-
-	candidates = append(candidates,
-		filepath.Join(defaults, "themes", theme, "status_codes.csv"),
-		filepath.Join(defaults, "themes", "default", "status_codes.csv"))
-	for _, path := range candidates {
-		log().Log(context.Background(), logger.LevelTrace, "looking for HTTP status descriptions", slog.String("path", path))
-
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			return path
+		if err != nil {
+			return fmt.Errorf("open status descriptions: %w", err)
 		}
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			key, description, found := strings.Cut(scanner.Text(), ",")
+			if !found {
+				break
+			}
+
+			code, err := strconv.Atoi(key)
+			if err != nil {
+				_ = file.Close()
+
+				return fmt.Errorf("invalid status code %q: %w", key, err)
+			}
+
+			p.statusCodes[code] = description
+		}
+
+		scanErr, closeErr := scanner.Err(), file.Close()
+		if scanErr != nil {
+			return fmt.Errorf("read status descriptions: %w", scanErr)
+		}
+
+		return closeErr
 	}
 
-	return ""
-}
-
-func httpStatusDescription(status int) string {
-	return statusCodes[status]
+	return nil
 }

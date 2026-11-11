@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,13 +13,35 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	unrolled "github.com/unrolled/render"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/navigation"
 	"github.com/kenjones-cisco/dapperdox/render/asset"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
+
+func TestHTMLOptionsAreRequestLocal(t *testing.T) {
+	ctx := testContext(t, map[string]string{
+		"templates/layout.tmpl": `<body>[: yield :]</body>`,
+		"templates/page.tmpl":   `[: current :]`,
+	})
+
+	var output bytes.Buffer
+	ctx.HTML(&output, http.StatusOK, "page", nil, HTMLOptions{
+		Layout: "", Funcs: template.FuncMap{currentFunc: func() string { return "custom" }},
+	})
+
+	if strings.TrimSpace(output.String()) != "custom" {
+		t.Fatalf("layout-free function override changed: %q", output.String())
+	}
+
+	output.Reset()
+	ctx.HTML(&output, http.StatusOK, "page", nil)
+
+	if strings.TrimSpace(output.String()) != "<body>page\n</body>" {
+		t.Fatalf("request options leaked: %q", output.String())
+	}
+}
 
 func testContext(t *testing.T, files map[string]string) *Context {
 	t.Helper()
@@ -153,7 +176,7 @@ func TestStatusWarningCustomLayoutAndRequestIsolation(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	ctx.HTML(w, http.StatusOK, "page", vars, unrolled.HTMLOptions{Layout: ""})
+	ctx.HTML(w, http.StatusOK, "page", vars, HTMLOptions{Layout: ""})
 
 	if !strings.HasPrefix(w.Body.String(), `<div class="documentation-status-warning"`) {
 		t.Fatal("layout-free warning missing")
