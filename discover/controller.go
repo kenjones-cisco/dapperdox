@@ -2,6 +2,7 @@ package discover
 
 import (
 	"reflect"
+	"sync"
 	"time"
 
 	wraperrors "github.com/pkg/errors"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/kenjones-cisco/dapperdox/discover/models"
 )
+
+const catalogWorkerCount = 3
 
 // watcher defines an event loop.
 //
@@ -63,8 +66,11 @@ type cacheHandler struct {
 
 // newClient creates an in cluster connection to Kubernetes API.
 func newClient() (kubernetes.Interface, error) {
-	// creates the in-cluster config
-	config, err := rest.InClusterConfig()
+	return newClientWithConfig(rest.InClusterConfig)
+}
+
+func newClientWithConfig(loadConfig func() (*rest.Config, error)) (kubernetes.Interface, error) {
+	config, err := loadConfig()
 	if err != nil {
 		return nil, err
 	}
@@ -158,12 +164,40 @@ func (c *catalog) AppendDeploymentHandler(f func(*models.Deployment, models.Even
 
 // Run all controllers until a signal is received.
 func (c *catalog) Run(stop <-chan struct{}) {
-	go c.queue.Run(stop)
-	go c.services.informer.Run(stop)
-	go c.deployments.informer.Run(stop)
+	var workers sync.WaitGroup
+
+	workers.Add(catalogWorkerCount)
+
+	go func() {
+		defer workers.Done()
+		c.queue.Run(stop)
+	}()
+	go func() {
+		defer workers.Done()
+		c.services.informer.Run(stop)
+	}()
+	go func() {
+		defer workers.Done()
+		c.deployments.informer.Run(stop)
+	}()
 
 	<-stop
+	workers.Wait()
 	log().Info("watcher terminated")
+}
+
+// HasSynced reports whether both the service and deployment inventories have
+// completed their initial list operations.
+func (c *catalog) HasSynced() bool {
+	if !c.services.informer.HasSynced() || !c.deployments.informer.HasSynced() {
+		return false
+	}
+
+	if queue, ok := c.queue.(interface{ Idle() bool }); ok {
+		return queue.Idle()
+	}
+
+	return true
 }
 
 // notify is the first handler in the handler chain.

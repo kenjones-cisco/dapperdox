@@ -20,21 +20,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package render
 
 import (
-	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"math"
 	"net/http"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 
-	"github.com/spf13/viper"
 	"github.com/unrolled/render"
 
-	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/render/asset"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
@@ -44,129 +42,167 @@ const (
 	sizeSixtyFour = 64
 )
 
-var (
-	// global instance of github.com/unrolled/render.Render.
-	_render *render.Render
-
-	counter int
-)
-
-// Register is alias for initializing new render.Render.
-func Register() {
-	log().Debug("initializing Render")
-
-	_render = newRender()
+// Context owns the rendering state for one immutable documentation generation.
+// Set navigation while building the generation, before publishing it.
+type Context struct {
+	Suite     *spec.Suite
+	Assets    *asset.Catalog
+	templates *template.Template
+	guides    map[string]GuideType
 }
 
-// HTML is an alias to github.com/unrolled/render.Render.HTML.
-func HTML(w io.Writer, status int, name string, binding interface{}, htmlOpt ...render.HTMLOptions) {
-	_ = _render.HTML(w, status, name, binding, htmlOpt...)
-}
-
-// TemplateLookup is an alias to github.com/unrolled/render.TemplateLookup.
-func TemplateLookup(t string) *template.Template {
-	return _render.TemplateLookup(t)
-}
-
-func newRender() *render.Render {
-	log().Trace("creating instance of render.Render")
-
-	asset.CompileGFMMap()
-
-	// XXX Order of directory importing is IMPORTANT XXX
-	if viper.GetString(config.AssetsDir) != "" {
-		asset.Compile(filepath.Join(viper.GetString(config.AssetsDir), "templates"), "assets/templates")
-		asset.Compile(filepath.Join(viper.GetString(config.AssetsDir), "static"), "assets/static")
-		asset.Compile(filepath.Join(viper.GetString(config.AssetsDir), "themes", viper.GetString(config.Theme)), "assets")
-		compileSections(viper.GetString(config.AssetsDir))
+// New validates and compiles templates without changing application-global state.
+func New(suite *spec.Suite, catalog *asset.Catalog) (*Context, error) {
+	if suite == nil || catalog == nil {
+		return nil, errors.New("renderer requires a suite and asset catalog")
 	}
 
-	// Import custom theme from custom directory (if defined)
-	if viper.GetString(config.Theme) != "" {
-		dir := filepath.Join(viper.GetString(config.DefaultAssetsDir), "themes")
-		if viper.GetString(config.ThemeDir) != "" {
-			dir = viper.GetString(config.ThemeDir)
+	c := &Context{Suite: suite, Assets: catalog, guides: make(map[string]GuideType)}
+	t := template.New("assets/templates").Delims("[:", ":]").Funcs(c.funcs())
+
+	for _, path := range catalog.Names() {
+		if !strings.HasPrefix(path, "assets/templates/") || !strings.HasSuffix(path, ".tmpl") {
+			continue
 		}
 
-		asset.Compile(filepath.Join(dir, viper.GetString(config.Theme)), "assets")
+		buf, err := catalog.Asset(path)
+		if err != nil {
+			return nil, err
+		}
+
+		name := strings.TrimSuffix(strings.TrimPrefix(path, "assets/templates/"), ".tmpl")
+		if _, err := t.New(name).Parse(string(buf)); err != nil {
+			return nil, fmt.Errorf("compile template %s: %w", path, err)
+		}
 	}
 
-	if viper.GetString(config.Theme) != "default" {
-		// The default theme underpins all others
-		asset.Compile(filepath.Join(viper.GetString(config.DefaultAssetsDir), "themes", "default"), "assets")
+	c.templates = t
+	if c.TemplateLookup("layout") == nil {
+		return nil, errors.New("missing layout template")
 	}
 
-	compileSections(viper.GetString(config.DefaultAssetsDir))
-
-	// Fallback to local templates directory
-	asset.Compile(filepath.Join(viper.GetString(config.DefaultAssetsDir), "templates"), "assets/templates")
-	// Fallback to local static directory
-	asset.Compile(filepath.Join(viper.GetString(config.DefaultAssetsDir), "static"), "assets/static")
-
-	return render.New(render.Options{
-		Asset:      asset.Asset,
-		AssetNames: asset.Names,
-		Directory:  "assets/templates",
-		Delims:     render.Delims{Left: "[:", Right: ":]"},
-		Layout:     "layout",
-		Funcs: []template.FuncMap{{
-			"map":           Map,
-			"ext":           Extend,
-			"fnn":           FirstNotNil,
-			"arr":           Arr,
-			"lc":            strings.ToLower,
-			"uc":            strings.ToUpper,
-			"join":          strings.Join,
-			"concat":        func(a, b string) string { return a + b },
-			"counter_set":   func(a int) int { counter = a; return counter },
-			"counter_add":   func(a int) int { counter += a; return counter },
-			"mod":           func(a int, m int) int { return a % m },
-			"sub":           func(a, b interface{}) int64 { return toInt64(a) - toInt64(b) },
-			"safehtml":      func(s string) template.HTML { return template.HTML(s) },
-			"haveTemplate":  TemplateLookup,
-			"overlay":       func(n string, d ...interface{}) template.HTML { return overlayFunc(n, d) },
-			"getAssetPaths": func(s string, d ...interface{}) []string { return getAssetPaths(s, d) },
-		}},
-	})
+	return c, nil
 }
 
-func compileSections(assetsDir string) {
-	// specification specific guides
-	for _, specification := range spec.APISuite {
-		log().Debugf("- Specification assets for %q", specification.APIInfo.Title)
-		compileSectionPart(specification.ID, assetsDir, "templates", "assets/templates/")
-		compileSectionPart(specification.ID, assetsDir, "static", "assets/static/")
+func (c *Context) funcs() template.FuncMap {
+	return template.FuncMap{
+		"map":           Map,
+		"ext":           Extend,
+		"fnn":           FirstNotNil,
+		"arr":           Arr,
+		"lc":            strings.ToLower,
+		"uc":            strings.ToUpper,
+		"join":          strings.Join,
+		"concat":        func(a, b string) string { return a + b },
+		"counter_set":   func(a int) int { return a },
+		"counter_add":   func(a int) int { return a },
+		"mod":           func(a int, m int) int { return a % m },
+		"sub":           func(a, b interface{}) int64 { return toInt64(a) - toInt64(b) },
+		"safehtml":      func(s string) template.HTML { return template.HTML(s) },
+		"haveTemplate":  c.TemplateLookup,
+		"overlay":       func(string, ...interface{}) (template.HTML, error) { return "", nil },
+		"getAssetPaths": func(s string, d ...interface{}) []string { return getAssetPaths(s, d) },
+		"yield":         func() (template.HTML, error) { return "", errors.New("yield called without layout") },
+		"current":       func() string { return "" },
+		"partial":       func(string) (template.HTML, error) { return "", nil },
+		"block":         func(string) (template.HTML, error) { return "", nil },
 	}
 }
 
-func compileSectionPart(id, assetsDir, part, prefix string) {
-	stem := filepath.Join(id, part)
-	asset.Compile(filepath.Join(assetsDir, "sections", stem), filepath.Join(prefix, stem))
+// TemplateLookup looks up a template in this generation.
+func (c *Context) TemplateLookup(name string) *template.Template {
+	if c.templates == nil {
+		return nil
+	}
+
+	return c.templates.Lookup(name)
 }
 
-// htmlWriter implements an HTML Writer interface.
-type htmlWriter struct {
-	h *bufio.Writer
+// HTML renders with request-local functions, sharing the same counter with nested overlays.
+// Errors are logged explicitly and incomplete template output is never sent.
+func (c *Context) HTML(w io.Writer, status int, name string, binding interface{}, htmlOpt ...render.HTMLOptions) {
+	if response, ok := w.(http.ResponseWriter); ok {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/html; charset=UTF-8")
+	}
+
+	output, err := c.html(name, binding, htmlOpt...)
+	if err != nil {
+		log().WithError(err).Error("render HTML")
+
+		if response, ok := w.(http.ResponseWriter); ok {
+			http.Error(response, "Unable to render documentation", http.StatusInternalServerError)
+		}
+
+		return
+	}
+
+	output = injectStatus(output, binding)
+
+	if response, ok := w.(http.ResponseWriter); ok {
+		response.WriteHeader(status)
+	}
+
+	if _, err := w.Write(output); err != nil {
+		log().WithError(err).Error("write HTML")
+	}
 }
 
-// Header provides empty implementation.
-func (w htmlWriter) Header() http.Header { return http.Header{} }
+func (c *Context) html(name string, binding interface{}, htmlOpt ...render.HTMLOptions) ([]byte, error) {
+	t, err := c.templates.Clone()
+	if err != nil {
+		return nil, err
+	}
 
-// WriteHeader provides empty implementation.
-func (w htmlWriter) WriteHeader(int) {}
+	counter := 0
+	execute := func(name string, data interface{}) (template.HTML, error) {
+		var b bytes.Buffer
+		execErr := t.ExecuteTemplate(&b, name, data)
 
-// Write provides empty implementation.
-func (w htmlWriter) Write(data []byte) (int, error) { return w.h.Write(data) }
+		return template.HTML(b.String()), execErr
+	}
+	funcs := template.FuncMap{
+		"counter_set": func(a int) int { counter = a; return counter },
+		"counter_add": func(a int) int { counter += a; return counter },
+		"overlay":     func(n string, data ...interface{}) (template.HTML, error) { return overlayFunc(t, n, data) },
+		"yield":       func() (template.HTML, error) { return execute(name, binding) },
+		"current":     func() string { return name },
+		"partial": func(partial string) (template.HTML, error) {
+			target := partial + "-" + name
+			if t.Lookup(target) == nil {
+				return "", nil
+			}
+			return execute(target, binding)
+		},
+	}
+	funcs["block"] = funcs["partial"]
+	t.Funcs(funcs)
 
-// Flush provides empty implementation.
-func (w htmlWriter) Flush() { _ = w.h.Flush() }
+	layout := "layout"
+	if len(htmlOpt) > 0 {
+		layout = htmlOpt[0].Layout
+		t.Funcs(htmlOpt[0].Funcs)
+	}
 
-// XXX WHY ARRAY of DATA?
-func overlayFunc(name string, data []interface{}) template.HTML { // TODO Will be specification specific
+	target := name
+	if layout != "" {
+		target = layout
+	}
+
+	if t.Lookup(name) == nil {
+		return nil, fmt.Errorf("template %q not found", name)
+	}
+
+	result, err := execute(target, binding)
+
+	return []byte(result), err
+}
+
+func overlayFunc(t *template.Template, name string, data []interface{}) (template.HTML, error) {
 	if len(data) == 0 || data[0] == nil {
 		log().Debug("Data nil")
 
-		return ""
+		return "", nil
 	}
 
 	log().Tracef("Overlay: Looking for overlay %s", name)
@@ -175,7 +211,7 @@ func overlayFunc(name string, data []interface{}) template.HTML { // TODO Will b
 	if !ok {
 		log().Trace("Overlay: type convert of data[0] to map[string]interface{} failed. Not an expected type.")
 
-		return ""
+		return "", nil
 	}
 
 	var b bytes.Buffer
@@ -184,20 +220,18 @@ func overlayFunc(name string, data []interface{}) template.HTML { // TODO Will b
 	for _, op := range overlayPaths(name, datamap) {
 		log().Tracef("Overlay: Does %q exist?", op)
 
-		if TemplateLookup(op) != nil {
+		if t.Lookup(op) != nil {
 			log().Tracef("Applying overlay %q", op)
 
-			writer := htmlWriter{h: bufio.NewWriter(&b)}
-
-			// data is a single item array (though I've not figured out why yet!)
-			_ = newRender().HTML(writer, http.StatusOK, op, data[0], render.HTMLOptions{Layout: ""})
-			writer.Flush()
+			if err := t.ExecuteTemplate(&b, op, data[0]); err != nil {
+				return "", err
+			}
 
 			break
 		}
 	}
 
-	return template.HTML(b.String())
+	return template.HTML(b.String()), nil
 }
 
 func overlayPaths(name string, datamap map[string]interface{}) []string {
@@ -235,6 +269,10 @@ func overlayPaths(name string, datamap map[string]interface{}) []string {
 }
 
 func getAssetPaths(_ string, data []interface{}) []string {
+	if len(data) == 0 {
+		return nil
+	}
+
 	datamap, _ := data[0].(map[string]interface{})
 
 	var paths []string

@@ -21,6 +21,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package timeout
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sync"
@@ -50,6 +51,10 @@ type handler struct {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	r = r.WithContext(ctx)
 	done := make(chan bool, 1)
 	tw := &writer{w: w}
 

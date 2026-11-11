@@ -1,13 +1,14 @@
 package discover
 
 import (
-	"os"
+	"errors"
 	"testing"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 
 	"github.com/kenjones-cisco/dapperdox/discover/models"
 )
@@ -17,36 +18,22 @@ const (
 )
 
 func Test_NewClient(t *testing.T) {
-	if _, err := newClient(); err == nil {
-		t.Errorf("newClient() error = %v, wantErr %v", err, true)
+	configErr := errors.New("configuration unavailable")
+	if _, err := newClientWithConfig(func() (*rest.Config, error) {
+		return nil, configErr
+	}); !errors.Is(err, configErr) {
+		t.Fatalf("newClientWithConfig() error = %v, want %v", err, configErr)
 	}
 
-	envVars := []string{"KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT"}
-	existingEnv := make(map[string]string)
-
-	for _, k := range envVars {
-		existingEnv[k] = os.Getenv(k)
-	}
-
-	defer func() {
-		for k, v := range existingEnv {
-			t.Setenv(k, v)
-		}
-	}()
-
-	t.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
-	t.Setenv("KUBERNETES_SERVICE_PORT", "8080")
-
-	copyKubeToken()
-	copyKubeCert()
-
-	d, err := newClient()
+	client, err := newClientWithConfig(func() (*rest.Config, error) {
+		return &rest.Config{Host: "https://127.0.0.1"}, nil
+	})
 	if err != nil {
-		t.Errorf("newClient() error = %v, wantErr %v", err, true)
+		t.Fatalf("newClientWithConfig() error = %v", err)
 	}
 
-	if d == nil {
-		t.Errorf("newClient() = %v, want not nil", d)
+	if client == nil {
+		t.Fatal("newClientWithConfig() returned nil client")
 	}
 }
 

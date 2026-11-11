@@ -22,25 +22,6 @@ const (
 	groupBySP      = "Service Provider APIs"
 )
 
-func copyFile(src, dst string) {
-	// Read all content of src to data
-	data, _ := os.ReadFile(src)
-	// Write data to dst
-	_ = os.WriteFile(dst, data, 0o644)
-}
-
-func copyKubeToken() {
-	_ = os.MkdirAll("/var/run/secrets/kubernetes.io/serviceaccount", 0o755)
-
-	copyFile("testdata/token", "/var/run/secrets/kubernetes.io/serviceaccount/token")
-}
-
-func copyKubeCert() {
-	_ = os.MkdirAll("/var/run/secrets/kubernetes.io/serviceaccount", 0o755)
-
-	copyFile("testdata/ca.crt", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
-}
-
 func genServerAPI(path string) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		spec, err := os.ReadFile(path)

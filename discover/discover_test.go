@@ -1,45 +1,19 @@
 package discover
 
 import (
-	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/kenjones-cisco/dapperdox/discover/models"
 )
 
 func TestNewDiscoverer(t *testing.T) {
-	if _, err := NewDiscoverer(); err == nil {
-		t.Errorf("NewDiscoverer() error = %v, wantErr %v", err, true)
-	}
-
-	envVars := []string{"KUBERNETES_SERVICE_HOST", "KUBERNETES_SERVICE_PORT"}
-	existingEnv := make(map[string]string)
-
-	for _, k := range envVars {
-		existingEnv[k] = os.Getenv(k)
-	}
-
-	defer func() {
-		for k, v := range existingEnv {
-			t.Setenv(k, v)
-		}
-	}()
-
-	t.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
-	t.Setenv("KUBERNETES_SERVICE_PORT", "8080")
-
-	copyKubeToken()
-	copyKubeCert()
-
-	d, err := NewDiscoverer()
-	if err != nil {
-		t.Errorf("NewDiscoverer() error = %v, wantErr %v", err, true)
-	}
-
+	d := newDiscovererWithClient(fake.NewSimpleClientset())
 	if d == nil {
-		t.Errorf("NewDiscoverer() = %v, want not nil", d)
+		t.Fatal("newDiscovererWithClient() returned nil manager")
 	}
 }
 

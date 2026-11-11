@@ -30,23 +30,28 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
-	"github.com/kenjones-cisco/dapperdox/discover"
 )
 
-var specReplacer *strings.Replacer
-
 // Register creates routes for each static resource.
-func Register(r *mux.Router, d discover.DiscoveryManager) {
+func Register(r *mux.Router, discovered map[string][]byte) error {
 	log().Info("Registering specifications")
 
-	loadReplacer()
+	specReplacer := loadReplacer()
 
 	var specMap map[string][]byte
 
-	if viper.GetBool(config.DiscoveryEnabled) {
-		specMap = loadSpecsByDiscovery(d)
+	if discovered != nil {
+		specMap = make(map[string][]byte, len(discovered))
+		for key, raw := range discovered {
+			specMap["/"+strings.TrimPrefix(key, "/")+"/api.json"] = raw
+		}
 	} else {
-		specMap = loadSpecsByDir()
+		var err error
+
+		specMap, err = loadSpecsByDir()
+		if err != nil {
+			return err
+		}
 	}
 
 	for k := range specMap {
@@ -63,58 +68,38 @@ func Register(r *mux.Router, d discover.DiscoveryManager) {
 			_, _ = w.Write(tmpSpec)
 		})
 	}
+
+	return nil
 }
 
-func loadReplacer() {
+func loadReplacer() *strings.Replacer {
 	// Build a replacer to search/replace specification URLs
-	if specReplacer == nil {
-		var replacements []string
+	var replacements []string
 
-		// Configure the replacer with key=value pairs
-		for k, v := range viper.GetStringMapString(config.SpecRewriteURL) {
-			if v != "" {
-				// Map between configured to=from URL pair
-				replacements = append(replacements, k, v)
-			} else {
-				// Map between configured URL and site URL
-				replacements = append(replacements, k, viper.GetString(config.SiteURL))
-			}
+	// Configure the replacer with key=value pairs
+	for k, v := range viper.GetStringMapString(config.SpecRewriteURL) {
+		if v != "" {
+			// Map between configured to=from URL pair
+			replacements = append(replacements, k, v)
+		} else {
+			// Map between configured URL and site URL
+			replacements = append(replacements, k, viper.GetString(config.SiteURL))
 		}
-
-		specReplacer = strings.NewReplacer(replacements...)
 	}
+
+	return strings.NewReplacer(replacements...)
 }
 
-func loadSpecsByDiscovery(d discover.DiscoveryManager) map[string][]byte {
-	if d == nil {
-		log().Info("- No discovered specificiations to serve")
-
-		return nil
-	}
-
-	nsMap := make(map[string][]byte)
-
-	for k, spec := range d.Specs() {
-		nsMap[fmt.Sprintf("/%s/api.json", k)] = spec
-	}
-
-	log().Debugf("loaded [%d] specs for download", len(nsMap))
-
-	return nsMap
-}
-
-func loadSpecsByDir() map[string][]byte {
+func loadSpecsByDir() (map[string][]byte, error) {
 	if viper.GetString(config.SpecDir) == "" {
 		log().Info("- No local specifications to serve")
 
-		return nil
+		return map[string][]byte{}, nil
 	}
 
 	base, err := filepath.Abs(filepath.Clean(viper.GetString(config.SpecDir)))
 	if err != nil {
-		log().Errorf("Error forming specification path: %s", err)
-
-		return nil
+		return nil, fmt.Errorf("form specification path: %w", err)
 	}
 
 	log().Debugf("- Scanning base directory %s", base)
@@ -122,7 +107,15 @@ func loadSpecsByDir() map[string][]byte {
 	base = filepath.ToSlash(base)
 	specMap := make(map[string][]byte)
 
-	_ = filepath.Walk(base, func(path string, _ os.FileInfo, _ error) error {
+	err = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
 		if path == base {
 			// Nothing to do with this path
 			return nil
@@ -141,11 +134,16 @@ func loadSpecsByDir() map[string][]byte {
 			log().Debugf("    = URL : %s", route)
 			log().Tracef("    + File: %s", path)
 
-			specMap[route], _ = os.ReadFile(path)
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+
+			specMap[route] = content
 		}
 
 		return nil
 	})
 
-	return specMap
+	return specMap, err
 }

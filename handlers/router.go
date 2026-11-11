@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
-	"github.com/kenjones-cisco/dapperdox/discover"
 	"github.com/kenjones-cisco/dapperdox/handlers/guides"
 	"github.com/kenjones-cisco/dapperdox/handlers/home"
 	"github.com/kenjones-cisco/dapperdox/handlers/proxy"
@@ -24,26 +23,46 @@ import (
 	"github.com/kenjones-cisco/dapperdox/handlers/timeout"
 	log "github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/render"
+	"github.com/kenjones-cisco/dapperdox/render/asset"
 	"github.com/kenjones-cisco/dapperdox/spec"
 	"github.com/kenjones-cisco/dapperdox/version"
 )
 
 // NewRouterChain creates a router with a chain of middlewares that acts as an http.Handler.
-func NewRouterChain() http.Handler {
-	router := createMiddlewareRouter()
+func NewRouterChain() (http.Handler, error) {
+	catalog, err := asset.NewCatalog()
+	if err != nil {
+		return nil, err
+	}
 
-	loadAndRegisterSpecs(router, nil)
+	suite, err := spec.LoadSuite()
+	if err != nil {
+		return nil, err
+	}
 
-	return router
+	generation, err := buildGeneration(suite, nil, catalog)
+	if err != nil {
+		return nil, err
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/healthz" || req.URL.Path == "/readyz" {
+			w.WriteHeader(http.StatusOK)
+
+			return
+		}
+
+		generation.router.ServeHTTP(w, req)
+	}), nil
 }
 
-func createMiddlewareRouter() *mux.Router {
+func createMiddlewareRouter(renderer *render.Context) *mux.Router {
 	router := mux.NewRouter()
 	router.Use(
 		handlers.RecoveryHandler(handlers.RecoveryLogger(log.Logger()), handlers.PrintRecoveryStack(true)),
 		withLogger,
-		timeoutHandler,
-		withCsrf,
+		func(h http.Handler) http.Handler { return timeoutHandler(renderer, h) },
+		func(h http.Handler) http.Handler { return withCsrf(renderer, h) },
 		injectHeaders,
 		handlers.CORS(handlers.AllowedOrigins(viper.GetStringSlice(config.AllowOrigin))),
 	)
@@ -53,45 +72,78 @@ func createMiddlewareRouter() *mux.Router {
 	return router
 }
 
-func loadAndRegisterSpecs(router *mux.Router, d discover.DiscoveryManager) {
-	specs.Register(router, d)
-
-	newspecs, err := spec.LoadSpecifications(d)
+func buildGeneration(suite *spec.Suite, raw map[string][]byte, catalog *asset.Catalog) (*generation, error) {
+	renderer, err := render.New(suite, catalog)
 	if err != nil {
-		log.Logger().Fatalf("Load specification error: %s", err)
+		return nil, err
 	}
 
-	// TODO(): fix registrators memory leak
-	// only update/register new specs if new items identified.
-	if newspecs {
-		render.Register()
-		reference.Register(router) // large memory leak when processing multiple/duplicate API specs
-		guides.Register(router)
-		static.Register(router)
-		home.Register(router) // small memory leak when processing multiple/duplicate API specs
-		proxy.Register(router)
+	router := createMiddlewareRouter(renderer)
+
+	err = specs.Register(router, raw)
+	if err != nil {
+		return nil, err
 	}
+
+	reference.Register(router, renderer)
+
+	err = guides.Register(router, renderer)
+	if err != nil {
+		return nil, err
+	}
+
+	static.Register(router, renderer)
+	home.Register(router, renderer)
+	proxy.Register(router)
+
+	count := 0
+	paths := make(map[string]bool)
+
+	err = router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+		if routeErr := route.GetError(); routeErr != nil {
+			return routeErr
+		}
+
+		path, pathErr := route.GetPathTemplate()
+		if pathErr != nil {
+			return pathErr
+		}
+
+		if paths[path] {
+			return fmt.Errorf("duplicate route %q", path)
+		}
+
+		paths[path] = true
+		count++
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &generation{router: router, routes: count}, nil
 }
 
 func withLogger(h http.Handler) http.Handler {
 	return handlers.CombinedLoggingHandler(os.Stdout, h)
 }
 
-func withCsrf(h http.Handler) http.Handler {
+func withCsrf(renderer *render.Context, h http.Handler) http.Handler {
 	csrfHandler := nosurf.New(h)
 	csrfHandler.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		rsn := nosurf.Reason(req).Error()
 		log.Logger().Warnf("failed csrf validation: %s", rsn)
-		render.HTML(w, http.StatusBadRequest, "error", map[string]any{"error": rsn})
+		renderer.HTML(w, http.StatusBadRequest, "error", map[string]any{"error": rsn})
 	}))
 
 	return csrfHandler
 }
 
-func timeoutHandler(h http.Handler) http.Handler {
+func timeoutHandler(renderer *render.Context, h http.Handler) http.Handler {
 	return timeout.Handler(h, 1*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		log.Logger().Warn("request timed out")
-		render.HTML(w, http.StatusRequestTimeout, "error", map[string]any{"error": "Request timed out"})
+		renderer.HTML(w, http.StatusRequestTimeout, "error", map[string]any{"error": "Request timed out"})
 	}))
 }
 

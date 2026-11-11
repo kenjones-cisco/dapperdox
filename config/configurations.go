@@ -16,6 +16,7 @@ const (
 	Version   = "version"
 
 	BindAddr           = "bind-addr"
+	ManagementAddr     = "management-addr"
 	TLSCert            = "tls-certificate"
 	TLSKey             = "tls-key"
 	SiteURL            = "site-url"
@@ -73,6 +74,7 @@ func init() {
 	pflag.BoolP(Version, "V", false, "Display version")
 
 	pflag.String(BindAddr, "localhost:3123", "Bind address")
+	pflag.String(ManagementAddr, "127.0.0.1:8081", "Loopback-only operator status address (never expose through Service or ingress)")
 	pflag.String(TLSCert, "", "The fully qualified path to the TLS certificate file. For HTTP over TLS (HTTPS) both a certificate and a key must be provided")
 	pflag.String(TLSKey, "", "The fully qualified path to the TLS private key file. For HTTP over TLS (HTTPS) both a certificate and a key must be provided")
 	pflag.String(SiteURL, "http://localhost:3123/", "Public URL of the documentation service")
@@ -147,6 +149,7 @@ func initialize() {
 	_ = viper.BindEnv(LogLevel, "LOGLEVEL")
 
 	_ = viper.BindEnv(BindAddr, "BIND_ADDR")
+	_ = viper.BindEnv(ManagementAddr, "MANAGEMENT_ADDR")
 	_ = viper.BindEnv(TLSCert, "TLS_CERTIFICATE")
 	_ = viper.BindEnv(TLSKey, "TLS_KEY")
 	_ = viper.BindEnv(SiteURL, "SITE_URL")

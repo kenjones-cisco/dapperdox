@@ -360,7 +360,7 @@ func (c *APISpecification) load(specLocation string, document *loads.Document) {
 	}
 
 	scheme := "http"
-	if apispec.Schemes != nil {
+	if len(apispec.Schemes) > 0 {
 		scheme = apispec.Schemes[0]
 	}
 
@@ -378,7 +378,7 @@ func (c *APISpecification) load(specLocation string, document *loads.Document) {
 	c.APIInfo.Title = apispec.Info.Title
 
 	if c.APIInfo.Title == "" {
-		log().Panicf("Error: Specification %s does not have a info.title member.", c.URL)
+		panic(parseError("specification requires info.title"))
 	}
 
 	log().Tracef("Parse OpenAPI specification %q", c.APIInfo.Title)
@@ -682,7 +682,7 @@ func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem,
 	if api.Name == "" {
 		name := o.Summary
 		if name == "" {
-			log().Panicf("Error: Operation %q does not have an operationId or summary member.", id)
+			panic(parseError(fmt.Sprintf("operation %q requires operationId or summary", id)))
 		}
 
 		api.Name = name
@@ -699,7 +699,7 @@ func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem,
 
 	// Compile resources from response declaration
 	if o.Responses == nil {
-		log().Panicf("Error: Operation %s %s is missing a responses declaration.", methodname, path)
+		panic(parseError(fmt.Sprintf("operation %s %s requires responses", methodname, path)))
 	}
 	// FIXME - Dies if there are no responses...
 	for status, response := range o.Responses.StatusCodeResponses {
@@ -750,7 +750,7 @@ func (c *APISpecification) processParameters(params []spec.Parameter, method *Me
 			method.PathParams = append(method.PathParams, p)
 		case "body":
 			if param.Schema == nil {
-				log().Panicf("Error: 'in body' parameter %s is missing a schema declaration.", param.Name)
+				panic(parseError(fmt.Sprintf("body parameter %q requires schema", param.Name)))
 			}
 
 			var body map[string]interface{}
@@ -916,7 +916,7 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 	//  two cases is to keep the top level "type" in the second case, and apply it to items.schema.Type,
 	//  reseting our schema variable to items.schema.
 
-	if s.Type == nil {
+	if len(s.Type) == 0 {
 		s.Type = append(s.Type, "object")
 	}
 
@@ -929,12 +929,14 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 		if s.Items.Schema != nil { // API Spec - items: { properties: {} }
 			s = s.Items.Schema
 			log().Tracef("got s.Items.Schema for %s", s.Title)
-		} else { // API Spec - items: { $ref: "" }
+		} else if len(s.Items.Schemas) > 0 { // API Spec - items: { $ref: "" }
 			s = &s.Items.Schemas[0]
 			log().Tracef("got s.Items.Schemas[0] for %s", s.Title)
+		} else {
+			panic(parseError("array items require a schema"))
 		}
 
-		if s.Type == nil {
+		if len(s.Type) == 0 {
 			log().Tracef("Got array of objects or object. Name %s", s.Title)
 			s.Type = stringorarray // Put back original type
 		} else if s.Type.Contains(arrayType) {
@@ -960,7 +962,7 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 	id := titleToKebab(s.Title)
 
 	if len(fqNS) == 0 && id == "" {
-		log().Panicf("Error: %s %s references a model definition that does not have a title member.", strings.ToUpper(method.Method), method.Path)
+		panic(parseError(fmt.Sprintf("model for %s %s requires title", method.Method, method.Path)))
 	}
 
 	// Ignore ID (from title element) for all but child-objects...

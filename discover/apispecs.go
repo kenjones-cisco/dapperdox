@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/discover/models"
 )
 
 const (
@@ -23,16 +24,37 @@ const (
 )
 
 func (d *Discoverer) fetchAPISpecs() map[string][]byte {
-	rwd, err := loadRewritesDoc()
-	if err != nil {
-		log().WithError(err).Error("unable to load rewrites doc")
-
+	specs, _ := fetchAPIResults(d.data.services.List())
+	if len(specs) == 0 {
 		return nil
 	}
 
-	newSpecs := make(map[string][]byte)
+	return specs
+}
 
-	for _, service := range d.data.services.List() {
+func fetchAPIResults(services []*models.Service) (map[string][]byte, map[string]string) {
+	newSpecs := make(map[string][]byte)
+	failures := make(map[string]string)
+	active := make(map[string]struct{})
+
+	for _, service := range services {
+		for key := range serviceAPIKeys(service) {
+			active[key] = struct{}{}
+		}
+	}
+
+	rwd, err := loadRewritesDoc()
+	if err != nil {
+		log().Error("unable to load rewrites doc")
+
+		for key := range active {
+			failures[key] = "configuration_failed"
+		}
+
+		return newSpecs, failures
+	}
+
+	for _, service := range services {
 		if service.Hostname == "" || isIgnoredSvc(service.Hostname) {
 			log().Warnf("invalid service %q", service.Hostname)
 
@@ -49,20 +71,34 @@ func (d *Discoverer) fetchAPISpecs() map[string][]byte {
 
 			path, data, err := handleSpec(rwd, hostName, portNum)
 			if err != nil {
-				log().WithError(err).Errorf("unable to load and process spec from [%s:%d]", hostName, portNum)
+				log().Errorf("unable to load and process spec for API %q", hostName)
+
+				if _, activeAPI := active[hostName]; activeAPI {
+					failures[hostName] = "spec_fetch_or_validation_failed"
+				}
 
 				continue
 			}
 
 			newSpecs[path] = data
+
+			delete(failures, path)
 		}
 	}
 
-	if len(newSpecs) > 0 {
-		return newSpecs
+	for key := range active {
+		if _, succeeded := newSpecs[key]; succeeded {
+			delete(failures, key)
+
+			continue
+		}
+
+		if _, failed := failures[key]; !failed {
+			failures[key] = "spec_fetch_failed"
+		}
 	}
 
-	return nil
+	return newSpecs, failures
 }
 
 func loadRewritesDoc() (*loads.Document, error) {

@@ -31,42 +31,44 @@ import (
 )
 
 // Register creates routes for each home handler.
-func Register(r *mux.Router) {
+func Register(r *mux.Router, renderer *render.Context) {
 	log().Debug("registering handlers for home page")
 
 	// Homepages for each loaded specification
 	var specification *spec.APISpecification // Ends up being populated with the last spec processed
 
-	for _, specification = range spec.APISuite {
+	for _, current := range renderer.Suite.Specifications {
+		specification = current
+
 		log().Tracef("Build homepage route for specification %q", specification.ID)
 
-		r.Path("/" + specification.ID + "/reference").Methods(http.MethodGet).HandlerFunc(specificationSummaryHandler(specification))
+		r.Path("/" + specification.ID + "/reference").Methods(http.MethodGet).HandlerFunc(specificationSummaryHandler(renderer, specification))
 
 		// If missingh trailing slash, redirect to add it
 		r.Path("/" + specification.ID).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			http.Redirect(w, req, "/"+specification.ID+"/", http.StatusFound)
+			http.Redirect(w, req, "/"+current.ID+"/", http.StatusFound)
 		})
 	}
 
-	if len(spec.APISuite) == 1 && !viper.GetBool(config.ForceSpecList) {
+	if len(renderer.Suite.Specifications) == 1 && !viper.GetBool(config.ForceSpecList) {
 		// If there is only one specification loaded, then hotwire '/' to redirect to the
 		// specification summary page unless DapperDox is configured to show the specification list page.
 		r.Path("/").Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			http.Redirect(w, req, "/"+specification.ID+"/reference", http.StatusFound)
 		})
 	} else {
-		r.Path("/").Methods(http.MethodGet).HandlerFunc(specificationListHandler)
+		r.Path("/").Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) { specificationListHandler(renderer, w, req) })
 	}
 }
 
-func specificationListHandler(w http.ResponseWriter, req *http.Request) {
+func specificationListHandler(renderer *render.Context, w http.ResponseWriter, req *http.Request) {
 	log().Trace("Render HTML for top level index page")
 
-	render.HTML(w, http.StatusOK, "specification_list",
-		render.DefaultVars(req, nil, render.Vars{"Title": "Specifications list", "SpecificationList": true}))
+	renderer.HTML(w, http.StatusOK, "specification_list",
+		renderer.DefaultVars(req, nil, render.Vars{"Title": "Specifications list", "SpecificationList": true}))
 }
 
-func specificationSummaryHandler(s *spec.APISpecification) func(w http.ResponseWriter, req *http.Request) {
+func specificationSummaryHandler(renderer *render.Context, s *spec.APISpecification) func(w http.ResponseWriter, req *http.Request) {
 	// The default "theme" level reference index page.
 	tmpl := "specification_summary"
 
@@ -74,12 +76,12 @@ func specificationSummaryHandler(s *spec.APISpecification) func(w http.ResponseW
 
 	log().Tracef("+ Test for template %q", customTmpl)
 
-	if render.TemplateLookup(customTmpl) != nil {
+	if renderer.TemplateLookup(customTmpl) != nil {
 		tmpl = customTmpl
 	}
 
 	return func(w http.ResponseWriter, req *http.Request) {
-		render.HTML(w, http.StatusOK, tmpl,
-			render.DefaultVars(req, s, render.Vars{"Title": "Specification summary", "SpecificationSummary": true}))
+		renderer.HTML(w, http.StatusOK, tmpl,
+			renderer.DefaultVars(req, s, render.Vars{"Title": "Specification summary", "SpecificationSummary": true}))
 	}
 }

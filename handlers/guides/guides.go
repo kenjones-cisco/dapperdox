@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package guides
 
 import (
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -29,28 +30,31 @@ import (
 
 	"github.com/kenjones-cisco/dapperdox/navigation"
 	"github.com/kenjones-cisco/dapperdox/render"
-	"github.com/kenjones-cisco/dapperdox/render/asset"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
 
 const maxNavLevels = 2
 
 // Register routes for guide pages.
-func Register(r *mux.Router) {
+func Register(r *mux.Router, renderer *render.Context) error {
 	log().Info("Registering guides")
 
 	// specification specific guides
-	for _, specification := range spec.APISuite {
+	for _, specification := range renderer.Suite.Specifications {
 		log().Debugf("- Specification guides for %q", specification.APIInfo.Title)
-		register(r, "assets/templates", specification)
+
+		if err := register(r, renderer, "assets/templates", specification); err != nil {
+			return err
+		}
 	}
 
 	// Top level guides
 	log().Debug("- Root guides")
-	register(r, "assets/templates", nil)
+
+	return register(r, renderer, "assets/templates", nil)
 }
 
-func register(r *mux.Router, base string, specification *spec.APISpecification) {
+func register(r *mux.Router, renderer *render.Context, base string, specification *spec.APISpecification) error {
 	rootNode := "/guides"
 	routeBase := "/guides"
 
@@ -68,7 +72,7 @@ func register(r *mux.Router, base string, specification *spec.APISpecification) 
 
 	log().Tracef("  - Walk compiled asset tree %s", pathBase)
 
-	for _, path := range asset.Names() {
+	for _, path := range renderer.Assets.Names() {
 		if !strings.HasPrefix(path, pathBase) { // Only keep assets we want
 			continue
 		}
@@ -86,7 +90,9 @@ func register(r *mux.Router, base string, specification *spec.APISpecification) 
 
 			log().Tracef("      = URL  %s", route)
 
-			buildNavigation(guidesNavigation, path, pathBase, route, ext)
+			if err := buildNavigation(renderer, guidesNavigation, path, pathBase, route, ext); err != nil {
+				return err
+			}
 
 			r.Path(route).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				sid := "TOP LEVEL"
@@ -95,7 +101,7 @@ func register(r *mux.Router, base string, specification *spec.APISpecification) 
 				}
 
 				log().Tracef("Fetching guide from %q for spec ID %s", resource, sid)
-				render.HTML(w, http.StatusOK, resource, render.DefaultVars(req, specification, render.Vars{"Guide": resource}))
+				renderer.HTML(w, http.StatusOK, resource, renderer.DefaultVars(req, specification, render.Vars{"Guide": resource}))
 			})
 		}
 	}
@@ -110,7 +116,9 @@ func register(r *mux.Router, base string, specification *spec.APISpecification) 
 	})
 
 	// Register the guides navigation with the renderer
-	render.SetGuidesNavigation(specification, guidesNavigation.Children)
+	renderer.SetGuidesNavigation(specification, guidesNavigation.Children)
+
+	return nil
 }
 
 func findFirstGuideURI(tree *navigation.Node) string {
@@ -151,12 +159,12 @@ func stripBasepathAndExtension(name, basepath string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(name, basepath), filepath.Ext(name))
 }
 
-func buildNavigation(nav *navigation.Node, path, pathBase, route, ext string) {
+func buildNavigation(renderer *render.Context, nav *navigation.Node, path, pathBase, route, ext string) error {
 	log().Tracef("      - Look for metadata asset %s", path)
 
 	// See if guide has been marked up with navigation metadata...
-	hierarchy := asset.MetaData(path, "Navigation")
-	sortOrder := asset.MetaData(path, "SortOrder")
+	hierarchy := renderer.Assets.MetaData(path, "Navigation")
+	sortOrder := renderer.Assets.MetaData(path, "SortOrder")
 
 	if hierarchy != "" {
 		log().Tracef("      * Got navigation metadata %s for file %s", hierarchy, path)
@@ -171,7 +179,7 @@ func buildNavigation(nav *navigation.Node, path, pathBase, route, ext string) {
 	parts := len(split)
 
 	if parts > maxNavLevels {
-		log().Panicf("Error: Guide %q contains too many navigation levels (%d)", hierarchy, parts)
+		return fmt.Errorf("guide %q contains too many navigation levels (%d)", hierarchy, parts)
 	}
 
 	if sortOrder == "" {
@@ -234,4 +242,6 @@ func buildNavigation(nav *navigation.Node, path, pathBase, route, ext string) {
 			}
 		}
 	}
+
+	return nil
 }
