@@ -2,7 +2,9 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/pprof"
 	"os"
@@ -27,6 +29,8 @@ import (
 	"github.com/kenjones-cisco/dapperdox/spec"
 	"github.com/kenjones-cisco/dapperdox/version"
 )
+
+var errDuplicateRoute = errors.New("duplicate route")
 
 // NewRouterChain creates a router with a chain of middlewares that acts as an http.Handler.
 func NewRouterChain() (http.Handler, error) {
@@ -59,7 +63,7 @@ func NewRouterChain() (http.Handler, error) {
 func createMiddlewareRouter(renderer *render.Context) *mux.Router {
 	router := mux.NewRouter()
 	router.Use(
-		handlers.RecoveryHandler(handlers.RecoveryLogger(log.Logger()), handlers.PrintRecoveryStack(true)),
+		handlers.RecoveryHandler(handlers.RecoveryLogger(recoveryLogger{}), handlers.PrintRecoveryStack(true)),
 		withLogger,
 		func(h http.Handler) http.Handler { return timeoutHandler(renderer, h) },
 		func(h http.Handler) http.Handler { return withCsrf(renderer, h) },
@@ -70,6 +74,12 @@ func createMiddlewareRouter(renderer *render.Context) *mux.Router {
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
 
 	return router
+}
+
+type recoveryLogger struct{}
+
+func (recoveryLogger) Println(values ...any) {
+	log.Logger().Error("HTTP handler panic", slog.String("details", fmt.Sprintln(values...)))
 }
 
 func buildGeneration(suite *spec.Suite, raw map[string][]byte, catalog *asset.Catalog) (*generation, error) {
@@ -110,7 +120,7 @@ func buildGeneration(suite *spec.Suite, raw map[string][]byte, catalog *asset.Ca
 		}
 
 		if paths[path] {
-			return fmt.Errorf("duplicate route %q", path)
+			return fmt.Errorf("%w %q", errDuplicateRoute, path)
 		}
 
 		paths[path] = true
@@ -133,7 +143,7 @@ func withCsrf(renderer *render.Context, h http.Handler) http.Handler {
 	csrfHandler := nosurf.New(h)
 	csrfHandler.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		rsn := nosurf.Reason(req).Error()
-		log.Logger().Warnf("failed csrf validation: %s", rsn)
+		log.Logger().WarnContext(req.Context(), fmt.Sprintf("failed csrf validation: %s", rsn))
 		renderer.HTML(w, http.StatusBadRequest, "error", map[string]any{"error": rsn})
 	}))
 
@@ -141,8 +151,8 @@ func withCsrf(renderer *render.Context, h http.Handler) http.Handler {
 }
 
 func timeoutHandler(renderer *render.Context, h http.Handler) http.Handler {
-	return timeout.Handler(h, 1*time.Second, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		log.Logger().Warn("request timed out")
+	return timeout.Handler(h, 1*time.Second, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		log.Logger().WarnContext(req.Context(), "request timed out")
 		renderer.HTML(w, http.StatusRequestTimeout, "error", map[string]any{"error": "Request timed out"})
 	}))
 }

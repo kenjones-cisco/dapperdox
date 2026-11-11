@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -26,6 +27,12 @@ type generation struct {
 	routes int
 }
 
+const stateStale = "stale"
+
+const stateUnavailable = "unavailable"
+
+var errDiscoveryPeriod = errors.New("discovery update period must be positive")
+
 type acceptedAPI struct {
 	parsed   *spec.APISpecification
 	raw      []byte
@@ -36,7 +43,7 @@ type acceptedAPI struct {
 type APIStatus struct {
 	Name        string    `json:"name"`
 	State       string    `json:"state"`
-	LastSuccess time.Time `json:"last_success,omitempty"`
+	LastSuccess time.Time `json:"last_success"`
 	Failure     string    `json:"failure,omitempty"`
 }
 
@@ -48,8 +55,8 @@ type publishedView struct {
 
 // Status is the bounded operator view of the current catalog and last build.
 type Status struct {
-	Published   time.Time            `json:"published_at,omitempty"`
-	LastAttempt time.Time            `json:"last_attempt,omitempty"`
+	Published   time.Time            `json:"published_at"`
+	LastAttempt time.Time            `json:"last_attempt"`
 	APIs        map[string]APIStatus `json:"apis"`
 	Failure     string               `json:"failure,omitempty"`
 	Revision    uint64               `json:"source_revision"`
@@ -85,7 +92,7 @@ func NewAutoDiscoverUpdater(d discover.DiscoveryManager) (*Updater, error) {
 
 	period := viper.GetDuration(config.DiscoveryPeriodTime)
 	if period <= 0 {
-		return nil, errors.New("discovery update period must be positive")
+		return nil, errDiscoveryPeriod
 	}
 
 	u := &Updater{
@@ -99,31 +106,6 @@ func NewAutoDiscoverUpdater(d discover.DiscoveryManager) (*Updater, error) {
 	go u.run(viper.GetDuration(config.DiscoveryInitialDelay), period)
 
 	return u, nil
-}
-
-func (u *Updater) run(delay, period time.Duration) {
-	defer close(u.done)
-
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-u.stop:
-		return
-	case <-timer.C:
-		u.update()
-	}
-
-	ticker := time.NewTicker(period)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-u.stop:
-			return
-		case <-ticker.C:
-			u.update()
-		}
-	}
 }
 
 // Router is a stable dispatcher. Each request pins exactly one published view.
@@ -158,8 +140,8 @@ func (u *Updater) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ManagementHandler is deliberately not mounted on the documentation listener.
 func (u *Updater) ManagementHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
+	router := http.NewServeMux()
+	router.HandleFunc("GET /status", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 
@@ -167,17 +149,43 @@ func (u *Updater) ManagementHandler() http.Handler {
 		status.Building = u.building.Load()
 
 		if err := json.NewEncoder(w).Encode(status); err != nil {
-			log.Logger().WithError(err).Error("encode documentation status")
+			log.Logger().ErrorContext(req.Context(), "encode documentation status", slog.Any("error", err))
 		}
 	})
 
-	return mux
+	return router
 }
 
 // Close stops owned work and is safe to call concurrently or repeatedly.
 func (u *Updater) Close() {
 	u.close.Do(func() { close(u.stop) })
 	<-u.done
+}
+
+func (u *Updater) run(delay, period time.Duration) {
+	defer close(u.done)
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-u.stop:
+		return
+	case <-timer.C:
+		u.update()
+	}
+
+	ticker := time.NewTicker(period)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-u.stop:
+			return
+		case <-ticker.C:
+			u.update()
+		}
+	}
 }
 
 func (u *Updater) onChange() { u.dirty.Store(true) }
@@ -203,7 +211,7 @@ func reconcileAPI(key string, data []byte, fetched bool, outcome discover.APISta
 	failure := outcome.Failure
 
 	if failure == "" && !fetched {
-		failure = "unavailable"
+		failure = stateUnavailable
 	}
 
 	if failure == "" && (old.parsed == nil || !bytes.Equal(old.raw, data)) {
@@ -211,7 +219,7 @@ func reconcileAPI(key string, data []byte, fetched bool, outcome discover.APISta
 		if err != nil {
 			failure = "invalid_specification"
 
-			log.Logger().WithField("api", key).Warn("invalid API specification; retaining last known-good version")
+			log.Logger().With(slog.Any("api", key)).Warn("invalid API specification; retaining last known-good version")
 		} else {
 			api = acceptedAPI{raw: bytes.Clone(data), parsed: value, instance: outcome.Generation}
 		}
@@ -224,11 +232,11 @@ func reconcileAPI(key string, data []byte, fetched bool, outcome discover.APISta
 
 	if failure != "" {
 		status.Failure = failure
-		status.State = "unavailable"
+		status.State = stateUnavailable
 		status.LastSuccess = prior.LastSuccess
 
 		if old.parsed != nil {
-			status.State = "stale"
+			status.State = stateStale
 		}
 	}
 
@@ -246,6 +254,7 @@ func (u *Updater) update() {
 	u.building.Store(true)
 
 	defer u.building.Store(false)
+
 	previous := u.current.Load()
 	snapshot := u.snapshot()
 	next := &publishedView{
@@ -270,54 +279,12 @@ func (u *Updater) update() {
 		return
 	}
 
-	accepted := make(map[string]acceptedAPI)
-	parsed := make(map[string]*spec.APISpecification)
-	raw := make(map[string][]byte)
-	changed := previous.generation == nil
-
-	for key, outcome := range snapshot.APIs {
-		old, hadOld := u.last[key]
-		prior := previous.status.APIs[key]
-
-		if hadOld && old.instance != outcome.Generation {
-			old = acceptedAPI{}
-			hadOld = false
-			prior = APIStatus{}
-			changed = true
-		}
-
-		data, fetched := snapshot.Specs[key]
-
-		api, status := reconcileAPI(key, data, fetched, outcome, old, prior)
-		if api.parsed != nil {
-			accepted[key], parsed[key], raw[key] = api, api.parsed, api.raw
-		}
-
-		if api.parsed != nil {
-			next.statuses[api.parsed.ID] = render.Status{
-				State: status.State, Name: status.Name, LastSuccess: status.LastSuccess,
-			}
-		}
-
-		next.status.APIs[key] = status
-
-		if api.parsed != nil && (!hadOld || !bytes.Equal(old.raw, api.raw)) {
-			changed = true
-		}
-	}
-
-	if len(accepted) != len(u.last) {
-		changed = true
-	}
+	accepted, changed := u.reconcile(snapshot, previous, next)
 
 	if changed {
-		suite, err := spec.NewSuite(parsed)
-		if err == nil {
-			next.generation, err = buildGeneration(suite, raw, u.assets)
-		}
-
-		if err != nil {
-			log.Logger().WithError(err).Error("documentation generation rejected")
+		var err error
+		if next.generation, err = u.buildAccepted(accepted); err != nil {
+			log.Logger().With(slog.Any("error", err)).Error("documentation generation rejected")
 
 			rejected := *previous
 			rejected.status = previous.status
@@ -343,11 +310,62 @@ func (u *Updater) update() {
 	next.status.Ready = true
 	for key, status := range next.status.APIs {
 		if old := previous.status.APIs[key]; old.State != status.State || old.Failure != status.Failure {
-			log.Logger().WithField("api", key).WithField("state", status.State).
-				WithField("failure", status.Failure).Info("documentation availability changed")
+			log.Logger().With(slog.Any("api", key)).With(slog.Any("state", status.State)).
+				With(slog.Any("failure", status.Failure)).Info("documentation availability changed")
 		}
 	}
 
 	u.last = accepted
 	u.current.Store(next)
+}
+
+func (u *Updater) reconcile(snapshot discover.Snapshot, previous, next *publishedView) (accepted map[string]acceptedAPI, changed bool) {
+	accepted = make(map[string]acceptedAPI)
+	changed = previous.generation == nil
+
+	for key, outcome := range snapshot.APIs {
+		old, hadOld := u.last[key]
+		prior := previous.status.APIs[key]
+
+		if hadOld && old.instance != outcome.Generation {
+			old = acceptedAPI{}
+			hadOld = false
+			prior = APIStatus{}
+			changed = true
+		}
+
+		data, fetched := snapshot.Specs[key]
+
+		api, status := reconcileAPI(key, data, fetched, outcome, old, prior)
+		if api.parsed != nil {
+			accepted[key] = api
+			next.statuses[api.parsed.ID] = render.Status{
+				State: status.State, Name: status.Name, LastSuccess: status.LastSuccess,
+			}
+
+			if !hadOld || !bytes.Equal(old.raw, api.raw) {
+				changed = true
+			}
+		}
+
+		next.status.APIs[key] = status
+	}
+
+	return accepted, changed || len(accepted) != len(u.last)
+}
+
+func (u *Updater) buildAccepted(accepted map[string]acceptedAPI) (*generation, error) {
+	parsed := make(map[string]*spec.APISpecification, len(accepted))
+	raw := make(map[string][]byte, len(accepted))
+
+	for key, api := range accepted {
+		parsed[key], raw[key] = api.parsed, api.raw
+	}
+
+	suite, err := spec.NewSuite(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildGeneration(suite, raw, u.assets)
 }

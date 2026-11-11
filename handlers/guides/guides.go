@@ -20,6 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package guides
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -28,10 +30,13 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/navigation"
 	"github.com/kenjones-cisco/dapperdox/render"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
+
+var errNavigationDepth = errors.New("guide contains too many navigation levels")
 
 const maxNavLevels = 2
 
@@ -41,7 +46,7 @@ func Register(r *mux.Router, renderer *render.Context) error {
 
 	// specification specific guides
 	for _, specification := range renderer.Suite.Specifications {
-		log().Debugf("- Specification guides for %q", specification.APIInfo.Title)
+		log().Debug(fmt.Sprintf("- Specification guides for %q", specification.APIInfo.Title))
 
 		if err := register(r, renderer, "assets/templates", specification); err != nil {
 			return err
@@ -70,7 +75,7 @@ func register(r *mux.Router, renderer *render.Context, base string, specificatio
 	guidesNavigation.Children = make([]*navigation.Node, 0)
 	guidesNavigation.ChildMap = make(map[string]*navigation.Node)
 
-	log().Tracef("  - Walk compiled asset tree %s", pathBase)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("  - Walk compiled asset tree %s", pathBase))
 
 	for _, path := range renderer.Assets.Names() {
 		if !strings.HasPrefix(path, pathBase) { // Only keep assets we want
@@ -81,14 +86,14 @@ func register(r *mux.Router, renderer *render.Context, base string, specificatio
 
 		switch ext {
 		case ".tmpl", ".md":
-			log().Debugf("    - File %s", path)
+			log().Debug(fmt.Sprintf("    - File %s", path))
 
 			// Convert path/filename to route
 			route := routeBase + stripBasepathAndExtension(path, pathBase)
 			absresource := stripBasepathAndExtension(path, base)
 			resource := strings.TrimPrefix(absresource, "/")
 
-			log().Tracef("      = URL  %s", route)
+			log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      = URL  %s", route))
 
 			if err := buildNavigation(renderer, guidesNavigation, path, pathBase, route, ext); err != nil {
 				return err
@@ -100,7 +105,7 @@ func register(r *mux.Router, renderer *render.Context, base string, specificatio
 					sid = specification.ID
 				}
 
-				log().Tracef("Fetching guide from %q for spec ID %s", resource, sid)
+				log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Fetching guide from %q for spec ID %s", resource, sid))
 				renderer.HTML(w, http.StatusOK, resource, renderer.DefaultVars(req, specification, render.Vars{"Guide": resource}))
 			})
 		}
@@ -111,7 +116,7 @@ func register(r *mux.Router, renderer *render.Context, base string, specificatio
 	// Register default route for this guide set
 	r.Path(routeBase).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		uri := findFirstGuideURI(guidesNavigation)
-		log().Infof("Redirect to %s", uri)
+		log().InfoContext(req.Context(), fmt.Sprintf("Redirect to %s", uri))
 		http.Redirect(w, req, uri, http.StatusFound)
 	})
 
@@ -160,18 +165,18 @@ func stripBasepathAndExtension(name, basepath string) string {
 }
 
 func buildNavigation(renderer *render.Context, nav *navigation.Node, path, pathBase, route, ext string) error {
-	log().Tracef("      - Look for metadata asset %s", path)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      - Look for metadata asset %s", path))
 
 	// See if guide has been marked up with navigation metadata...
 	hierarchy := renderer.Assets.MetaData(path, "Navigation")
 	sortOrder := renderer.Assets.MetaData(path, "SortOrder")
 
 	if hierarchy != "" {
-		log().Tracef("      * Got navigation metadata %s for file %s", hierarchy, path)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      * Got navigation metadata %s for file %s", hierarchy, path))
 	} else {
 		// No Meta Data set on guide, so use the directory structure
 		hierarchy = strings.TrimPrefix(strings.TrimSuffix(path, ext), pathBase+"/")
-		log().Tracef("      * No navigation metadata for %s. Using path", hierarchy)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      * No navigation metadata for %s. Using path", hierarchy))
 	}
 
 	// Break hierarchy into bits
@@ -179,7 +184,7 @@ func buildNavigation(renderer *render.Context, nav *navigation.Node, path, pathB
 	parts := len(split)
 
 	if parts > maxNavLevels {
-		return fmt.Errorf("guide %q contains too many navigation levels (%d)", hierarchy, parts)
+		return fmt.Errorf("%w: %q (%d)", errNavigationDepth, hierarchy, parts)
 	}
 
 	if sortOrder == "" {
@@ -207,7 +212,7 @@ func buildNavigation(renderer *render.Context, nav *navigation.Node, path, pathB
 					Children:  make([]*navigation.Node, 0),
 				}
 				*currentList = append(*currentList, current[id])
-				log().Tracef("      + Adding %s = %s to branch", id, current[id].Name)
+				log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      + Adding %s = %s to branch", id, current[id].Name))
 			} else if sortOrder < currentItem.SortOrder { // Update the branch node sort order, if the leaf has a lower sort
 				currentItem.SortOrder = sortOrder
 			}
@@ -229,7 +234,7 @@ func buildNavigation(renderer *render.Context, nav *navigation.Node, path, pathB
 
 				*currentList = append(*currentList, current[id])
 
-				log().Tracef("      + Adding %s = %s to leaf node [a] Sort %s", current[id].URI, current[id].Name, sortOrder)
+				log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      + Adding %s = %s to leaf node [a] Sort %s", current[id].URI, current[id].Name, sortOrder))
 			} else {
 				// The page is a leaf node, but sits at a branch node. This means that the branch
 				// node has content! Set the uri, and adjust the sort order, if necessary.
@@ -238,7 +243,7 @@ func buildNavigation(renderer *render.Context, nav *navigation.Node, path, pathB
 					currentItem.SortOrder = sortOrder
 				}
 
-				log().Tracef("      + Adding %s = %s to leaf node [b] Sort %s", currentItem.URI, currentItem.Name, sortOrder)
+				log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      + Adding %s = %s to leaf node [b] Sort %s", currentItem.URI, currentItem.Name, sortOrder))
 			}
 		}
 	}

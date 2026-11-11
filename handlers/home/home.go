@@ -20,12 +20,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package home
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/render"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
@@ -40,7 +43,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 	for _, current := range renderer.Suite.Specifications {
 		specification = current
 
-		log().Tracef("Build homepage route for specification %q", specification.ID)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Build homepage route for specification %q", specification.ID))
 
 		r.Path("/" + specification.ID + "/reference").Methods(http.MethodGet).HandlerFunc(specificationSummaryHandler(renderer, specification))
 
@@ -62,7 +65,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 }
 
 func specificationListHandler(renderer *render.Context, w http.ResponseWriter, req *http.Request) {
-	log().Trace("Render HTML for top level index page")
+	log().Log(context.Background(), logger.LevelTrace, "Render HTML for top level index page")
 
 	renderer.HTML(w, http.StatusOK, "specification_list",
 		renderer.DefaultVars(req, nil, render.Vars{"Title": "Specifications list", "SpecificationList": true}))
@@ -74,7 +77,7 @@ func specificationSummaryHandler(renderer *render.Context, s *spec.APISpecificat
 
 	customTmpl := s.ID + "/specification_summary"
 
-	log().Tracef("+ Test for template %q", customTmpl)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("+ Test for template %q", customTmpl))
 
 	if renderer.TemplateLookup(customTmpl) != nil {
 		tmpl = customTmpl

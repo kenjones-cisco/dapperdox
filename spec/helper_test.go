@@ -1,7 +1,9 @@
 package spec
 
 import (
-	"github.com/go-openapi/swag"
+	"fmt"
+
+	"github.com/go-openapi/swag/loading"
 )
 
 type fakeDiscoverer struct {
@@ -23,9 +25,9 @@ func (fd *fakeDiscoverer) RegisterOnChangeFunc(_ func()) {}
 
 // specToByteSlice opens a test spec at a provided file-path and converts into a byte slice.
 func specToByteSlice(specLoc string) []byte {
-	raw, err := swag.LoadFromFileOrHTTP(specLoc)
+	raw, err := loading.LoadFromFileOrHTTP(specLoc)
 	if err != nil {
-		log().Errorf("cannot load spec %v", err)
+		log().Error(fmt.Sprintf("cannot load spec %v", err))
 
 		return nil
 	}

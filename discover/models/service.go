@@ -87,16 +87,16 @@ const (
 
 // ConvertCaseInsensitiveStringToProtocol converts a case-insensitive protocol to Protocol.
 func ConvertCaseInsensitiveStringToProtocol(protocolAsString string) Protocol {
-	switch strings.ToLower(protocolAsString) {
-	case "tcp":
+	switch strings.ToUpper(protocolAsString) {
+	case string(ProtocolTCP):
 		return ProtocolTCP
-	case "grpc":
+	case string(ProtocolGRPC):
 		return ProtocolGRPC
-	case "http":
+	case string(ProtocolHTTP):
 		return ProtocolHTTP
-	case "http2":
+	case string(ProtocolHTTP2):
 		return ProtocolHTTP2
-	case "https":
+	case string(ProtocolHTTPS):
 		return ProtocolHTTPS
 	}
 

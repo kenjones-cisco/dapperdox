@@ -1,24 +1,28 @@
-FROM golang:1.23
+FROM golang:1.26.11
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gettext-base \
         zip \
     && rm -rf /var/lib/apt/lists/*
 
-ENV YQ_BIN_VERSION v4.47.1
+ENV YQ_BIN_VERSION=v4.50.1
 
 ENV GOPATH=/go
 ENV GOBIN=/go/bin
-ENV GOLANGCI_LINT_VERSION "v1.64.8"
+ENV GOLANGCI_LINT_VERSION=v2.12.2
 
-RUN wget -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_BIN_VERSION}/yq_linux_amd64" \
+RUN wget -O /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_BIN_VERSION}/yq_linux_$(go env GOARCH)" \
     && chmod 755 /usr/local/bin/yq
 
-RUN go install golang.org/x/tools/cmd/goimports@v0.24.0 \
-    && go install github.com/mitchellh/gox@latest \
-    && go install gotest.tools/gotestsum@latest \
-    && wget -O - -q https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ${GOBIN} ${GOLANGCI_LINT_VERSION} \
+RUN go install golang.org/x/tools/cmd/goimports@v0.52.0 \
+    && go install github.com/mitchellh/gox@v1.0.1 \
+    && go install gotest.tools/gotestsum@v1.13.0 \
+    && wget -O /tmp/golangci-lint-install.sh https://raw.githubusercontent.com/golangci/golangci-lint/v2.12.2/install.sh \
+    && sh /tmp/golangci-lint-install.sh -b ${GOBIN} ${GOLANGCI_LINT_VERSION} \
+    && rm /tmp/golangci-lint-install.sh \
     && rm -rf /go/src/*
 
 ENV CGO_ENABLED=0 \
     GOFLAGS='-buildvcs=false'
+
+COPY scripts/golangci-base.yml /usr/local/etc/golangci.yml

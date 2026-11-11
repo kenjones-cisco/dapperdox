@@ -25,13 +25,16 @@ func TestTimeoutCancelsBackgroundRequest(t *testing.T) {
 	done := make(chan struct{})
 
 	go func() {
-		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
 		close(done)
 	}()
+
 	<-started
+
 	expired <- time.Now()
 
 	<-done
+
 	select {
 	case <-finished:
 	case <-time.After(time.Second):

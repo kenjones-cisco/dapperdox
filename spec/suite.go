@@ -10,6 +10,13 @@ import (
 	"github.com/go-openapi/loads"
 )
 
+var (
+	errMissingTitle = errors.New("specification requires info.title")
+	errMissingPaths = errors.New("specification requires paths")
+	errMissingID    = errors.New("specification requires a nonempty identifier")
+	errDuplicateID  = errors.New("duplicate specification identifier")
+)
+
 // Suite is an immutable parsed documentation catalog.
 type Suite struct {
 	Specifications map[string]*APISpecification
@@ -22,6 +29,7 @@ var parseMu sync.Mutex
 func Parse(location string, raw []byte) (*APISpecification, error) {
 	parseMu.Lock()
 	defer parseMu.Unlock()
+
 	loadStatusCodes()
 	loadReplacer()
 
@@ -56,11 +64,11 @@ func parseDocument(location string, document *loads.Document) (result *APISpecif
 	}()
 
 	if document.Spec().Info == nil || document.Spec().Info.Title == "" {
-		return nil, errors.New("specification requires info.title")
+		return nil, errMissingTitle
 	}
 
 	if document.Spec().Paths == nil {
-		return nil, errors.New("specification requires paths")
+		return nil, errMissingPaths
 	}
 
 	result = &APISpecification{}
@@ -86,11 +94,11 @@ func NewSuite(apis map[string]*APISpecification) (*Suite, error) {
 	for _, key := range keys {
 		api := apis[key]
 		if api == nil || api.ID == "" {
-			return nil, errors.New("specification requires a nonempty identifier")
+			return nil, errMissingID
 		}
 
 		if _, exists := suite.Specifications[api.ID]; exists {
-			return nil, fmt.Errorf("duplicate specification identifier %q", api.ID)
+			return nil, fmt.Errorf("%w %q", errDuplicateID, api.ID)
 		}
 
 		suite.Specifications[api.ID] = api
@@ -104,6 +112,7 @@ func NewSuite(apis map[string]*APISpecification) (*Suite, error) {
 func LoadSuite() (*Suite, error) {
 	parseMu.Lock()
 	defer parseMu.Unlock()
+
 	loadStatusCodes()
 	loadReplacer()
 

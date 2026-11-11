@@ -2,11 +2,14 @@ package discover
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/kenjones-cisco/dapperdox/discover/models"
 )
+
+var errTestRetry = errors.New("intentional retry")
 
 func TestQueue(t *testing.T) {
 	_ = NewTask(nil, nil, models.EventAdd)
@@ -15,7 +18,7 @@ func TestQueue(t *testing.T) {
 	out := 0
 	err := true
 	add := func(obj any, _ models.Event) error {
-		log().Infof("adding %d, error: %t", obj.(int), err)
+		log().Info(fmt.Sprintf("adding %d, error: %t", obj.(int), err))
 		objCnt, _ := obj.(int)
 
 		out += objCnt
@@ -26,7 +29,7 @@ func TestQueue(t *testing.T) {
 
 		err = false
 
-		return errors.New("intentional error")
+		return errTestRetry
 	}
 
 	go q.Run(stop)
@@ -84,10 +87,11 @@ func TestQueueShutdownCancelsRetryDelay(t *testing.T) {
 		q.Run(stop)
 		close(done)
 	}()
+
 	q.Push(Task{handler: func(any, models.Event) error {
 		close(started)
 
-		return errors.New("retry")
+		return errTestRetry
 	}})
 
 	select {
@@ -95,6 +99,7 @@ func TestQueueShutdownCancelsRetryDelay(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("queue handler did not start")
 	}
+
 	close(stop)
 
 	select {
@@ -119,12 +124,14 @@ func TestQueueIdleTracksQueuedAndActiveWork(t *testing.T) {
 		queue.Run(stop)
 		close(done)
 	}()
+
 	queue.Push(Task{handler: func(any, models.Event) error {
 		close(started)
 		<-release
 
 		return nil
 	}})
+
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -148,6 +155,7 @@ func TestQueueIdleTracksQueuedAndActiveWork(t *testing.T) {
 	}
 
 	close(stop)
+
 	select {
 	case <-done:
 	case <-time.After(time.Second):

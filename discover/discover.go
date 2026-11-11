@@ -5,6 +5,8 @@ package discover
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -107,21 +109,6 @@ func (d *Discoverer) Shutdown() {
 	log().Info("shutting down discovery process")
 }
 
-func (d *Discoverer) fetchContext() context.Context {
-	d.lifecycleMu.Lock()
-	defer d.lifecycleMu.Unlock()
-
-	if d.fetchCtx == nil {
-		d.fetchCtx, d.cancelFetch = context.WithCancel(context.Background())
-	}
-
-	if d.stopped {
-		d.cancelFetch()
-	}
-
-	return d.fetchCtx
-}
-
 // Run starts the discovery process and waits for initial informer
 // synchronization or shutdown.
 func (d *Discoverer) Run() {
@@ -152,33 +139,9 @@ func (d *Discoverer) Run() {
 
 	go func() {
 		defer d.runWG.Done()
+
 		d.waitForInitialSync(stop)
 	}()
-}
-
-func (d *Discoverer) waitForInitialSync(stop <-chan struct{}) {
-	ready, ok := d.services.(interface{ HasSynced() bool })
-	if !ok {
-		return
-	}
-
-	ticker := time.NewTicker(initialSyncPollInterval)
-	defer ticker.Stop()
-
-	for {
-		if ready.HasSynced() {
-			d.setSynced()
-			d.discover()
-
-			return
-		}
-
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 // RegisterOnChangeFunc provides a way to notify a consumer when discovery
@@ -211,6 +174,46 @@ func (d *Discoverer) Specs() map[string][]byte {
 	return d.Snapshot().Specs
 }
 
+func (d *Discoverer) fetchContext() context.Context {
+	d.lifecycleMu.Lock()
+	defer d.lifecycleMu.Unlock()
+
+	if d.fetchCtx == nil {
+		d.fetchCtx, d.cancelFetch = context.WithCancel(context.Background())
+	}
+
+	if d.stopped {
+		d.cancelFetch()
+	}
+
+	return d.fetchCtx
+}
+
+func (d *Discoverer) waitForInitialSync(stop <-chan struct{}) {
+	ready, ok := d.services.(interface{ HasSynced() bool })
+	if !ok {
+		return
+	}
+
+	ticker := time.NewTicker(initialSyncPollInterval)
+	defer ticker.Stop()
+
+	for {
+		if ready.HasSynced() {
+			d.setSynced()
+			d.discover()
+
+			return
+		}
+
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 func (d *Discoverer) setSynced() {
 	d.mu.Lock()
 	if d.synced {
@@ -238,6 +241,7 @@ func (d *Discoverer) discover() {
 	}
 
 	d.mu.RLock()
+
 	if !d.synced {
 		d.mu.RUnlock()
 
@@ -248,13 +252,12 @@ func (d *Discoverer) discover() {
 	serviceRevisions := make(map[string]uint64, len(d.serviceRevisions))
 	active := make(map[string]struct{}, len(d.apis))
 
-	for hostname, revision := range d.serviceRevisions {
-		serviceRevisions[hostname] = revision
-	}
+	maps.Copy(serviceRevisions, d.serviceRevisions)
 
 	for hostname := range d.apis {
 		active[hostname] = struct{}{}
 	}
+
 	d.mu.RUnlock()
 
 	fetch := d.fetch
@@ -272,6 +275,10 @@ func (d *Discoverer) discover() {
 		return
 	}
 
+	d.applyRefresh(active, serviceRevisions, specs, failures)
+}
+
+func (d *Discoverer) applyRefresh(active map[string]struct{}, serviceRevisions map[string]uint64, specs map[string][]byte, failures map[string]string) {
 	now := time.Now().UTC()
 
 	d.mu.Lock()
@@ -343,6 +350,7 @@ func (d *Discoverer) isStopping() bool {
 	if stop == nil {
 		return false
 	}
+
 	select {
 	case <-stop:
 		return true
@@ -352,11 +360,11 @@ func (d *Discoverer) isStopping() bool {
 }
 
 func (d *Discoverer) updateServices(service *models.Service, event models.Event) {
-	log().Debugf("(Discover Handler) Service: %v Event: %v", service, event)
+	log().Debug(fmt.Sprintf("(Discover Handler) Service: %v Event: %v", service, event))
 
 	if service == nil || isIgnoredSvc(service.Hostname) {
 		if service != nil {
-			log().Debugf("(Discover Handler) skipping service is part of ignore list: %s", service.Hostname)
+			log().Debug(fmt.Sprintf("(Discover Handler) skipping service is part of ignore list: %s", service.Hostname))
 		}
 
 		return
@@ -408,10 +416,10 @@ func (d *Discoverer) updateServices(service *models.Service, event models.Event)
 }
 
 func (d *Discoverer) updateDeployments(deployment *models.Deployment, event models.Event) {
-	log().Debugf("(Discover Handler) Deployment: %v Event: %v", deployment, event)
+	log().Debug(fmt.Sprintf("(Discover Handler) Deployment: %v Event: %v", deployment, event))
 
 	if deployment != nil && isIgnoredSvc(deployment.Name) {
-		log().Debugf("(Discover Handler) skipping deployment that is part of ignore list: %+v", *deployment)
+		log().Debug(fmt.Sprintf("(Discover Handler) skipping deployment that is part of ignore list: %+v", *deployment))
 
 		return
 	}
@@ -520,9 +528,7 @@ func cloneSpecs(specs map[string][]byte) map[string][]byte {
 
 func cloneAPIStatuses(apis map[string]APIStatus) map[string]APIStatus {
 	result := make(map[string]APIStatus, len(apis))
-	for key, status := range apis {
-		result[key] = status
-	}
+	maps.Copy(result, apis)
 
 	return result
 }

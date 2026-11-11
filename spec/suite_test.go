@@ -12,6 +12,7 @@ import (
 func TestParseOwnedSuite(t *testing.T) {
 	config.Restore()
 	defer config.Restore()
+
 	viper.Set(config.DefaultAssetsDir, "../assets")
 
 	raw, err := os.ReadFile("../fixtures/common_api.json")

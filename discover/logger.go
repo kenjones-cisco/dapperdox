@@ -1,11 +1,11 @@
 package discover
 
 import (
-	"github.com/sirupsen/logrus"
+	"log/slog"
 
 	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
-func log() logrus.FieldLogger {
-	return logger.Logger().WithField("pkg", "discover")
+func log() *slog.Logger {
+	return logger.Logger().With(slog.Any("pkg", "discover"))
 }

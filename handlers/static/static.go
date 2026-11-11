@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package static
 
 import (
+	"fmt"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -35,7 +36,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 	log().Debug("registering not found handler in static package")
 
 	r.NotFoundHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		renderer.HTML(w, http.StatusNotFound, "error", renderer.DefaultVars(req, nil, map[string]interface{}{"error": "Page not found", "code": http.StatusNotFound}))
+		renderer.HTML(w, http.StatusNotFound, "error", renderer.DefaultVars(req, nil, map[string]any{"error": "Page not found", "code": http.StatusNotFound}))
 	})
 
 	log().Debug("registering static content handlers for static package")
@@ -49,7 +50,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 			continue
 		}
 
-		log().Debugf("Got MIME type: %s", mimeType)
+		log().Debug(fmt.Sprintf("Got MIME type: %s", mimeType))
 
 		switch {
 		case strings.HasPrefix(mimeType, "image"),
@@ -64,7 +65,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 			// Drop assets/static prefix
 			path := strings.TrimPrefix(file, "assets/static")
 
-			log().Debugf("registering handler for static asset: %s", path)
+			log().Debug(fmt.Sprintf("registering handler for static asset: %s", path))
 
 			r.Path(path).Methods(http.MethodGet).HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				if b, err := renderer.Assets.Asset("assets/static" + path); err == nil {
@@ -76,7 +77,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 					return
 				}
 				// This should never happen!
-				log().Errorf("it happened ¯\\_(ツ)_/¯ %s", path)
+				log().ErrorContext(req.Context(), fmt.Sprintf("it happened ¯\\_(ツ)_/¯ %s", path))
 				r.NotFoundHandler.ServeHTTP(w, req)
 			})
 		}

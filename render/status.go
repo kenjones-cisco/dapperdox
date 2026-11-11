@@ -26,14 +26,16 @@ type statusKey struct{}
 
 const maxStatusNameRunes = 160
 
+const stateStale = "stale"
+
 // WithStatus associates a publication's immutable freshness view with a request.
 // Keys are public specification IDs; callers must not mutate the map afterward.
 func WithStatus(req *http.Request, status map[string]Status) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), statusKey{}, status))
 }
 
-func injectStatus(output []byte, binding interface{}) []byte {
-	values, ok := binding.(map[string]interface{})
+func injectStatus(output []byte, binding any) []byte {
+	values, ok := binding.(map[string]any)
 	if !ok {
 		if vars, isVars := binding.(Vars); isVars {
 			values = vars
@@ -45,7 +47,7 @@ func injectStatus(output []byte, binding interface{}) []byte {
 	keys := make([]string, 0, len(status))
 
 	for key, value := range status {
-		if value.State == "stale" && (!hasID || key == id) {
+		if value.State == stateStale && (!hasID || key == id) {
 			keys = append(keys, key)
 		}
 	}
@@ -59,35 +61,46 @@ func injectStatus(output []byte, binding interface{}) []byte {
 	var warning strings.Builder
 
 	for _, key := range keys {
-		value := status[key]
-
-		name := value.Name
-		if name == "" {
-			name = key
-		}
-
-		name = strings.Map(func(r rune) rune {
-			if unicode.IsControl(r) {
-				return -1
-			}
-
-			return r
-		}, name)
-		// Bound warning size independently of untrusted specification titles.
-		runes := []rune(name)
-		if len(runes) > maxStatusNameRunes {
-			name = string(runes[:maxStatusNameRunes])
-		}
-
-		last := "unknown"
-		if !value.LastSuccess.IsZero() {
-			last = value.LastSuccess.UTC().Format(time.RFC3339)
-		}
-
-		fmt.Fprintf(&warning, `<div class="documentation-status-warning" data-documentation-state="stale" role="status">Documentation for %s may be out of date. Last successful update: %s.</div>`,
-			html.EscapeString(name), html.EscapeString(last))
+		warning.WriteString(statusWarning(status[key], key))
 	}
 
+	index := bodyStart(output)
+	result := make([]byte, 0, len(output)+warning.Len())
+	result = append(result, output[:index]...)
+	result = append(result, warning.String()...)
+
+	return append(result, output[index:]...)
+}
+
+func statusWarning(value Status, key string) string {
+	name := value.Name
+	if name == "" {
+		name = key
+	}
+
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+
+		return r
+	}, name)
+	// Bound warning size independently of untrusted specification titles.
+	runes := []rune(name)
+	if len(runes) > maxStatusNameRunes {
+		name = string(runes[:maxStatusNameRunes])
+	}
+
+	last := "unknown"
+	if !value.LastSuccess.IsZero() {
+		last = value.LastSuccess.UTC().Format(time.RFC3339)
+	}
+
+	return fmt.Sprintf(`<div class="documentation-status-warning" data-documentation-state="stale" role="status">Documentation for %s may be out of date. Last successful update: %s.</div>`,
+		html.EscapeString(name), html.EscapeString(last))
+}
+
+func bodyStart(output []byte) int {
 	index, offset := 0, 0
 	tokenizer := nethtml.NewTokenizer(bytes.NewReader(output))
 
@@ -109,9 +122,5 @@ func injectStatus(output []byte, binding interface{}) []byte {
 		}
 	}
 
-	result := make([]byte, 0, len(output)+warning.Len())
-	result = append(result, output[:index]...)
-	result = append(result, warning.String()...)
-
-	return append(result, output[index:]...)
+	return index
 }

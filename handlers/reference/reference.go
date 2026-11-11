@@ -20,10 +20,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package reference
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
 
+	"github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/render"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
@@ -38,6 +41,12 @@ type registrar struct {
 	pathVersionMethod   map[string]versionedMethod
 	pathVersionResource map[string]versionedResource
 }
+
+const (
+	titleVar    = "Title"
+	versionVar  = "Version"
+	versionsVar = "Versions"
+)
 
 // Register creates routes for specification resource.
 func Register(r *mux.Router, renderer *render.Context) {
@@ -54,54 +63,26 @@ func (c *registrar) register(r *mux.Router) {
 	for _, specification := range c.render.Suite.Specifications {
 		specID := "/" + specification.ID
 
-		log().Debugf("Registering reference for OpenAPI specification %q", specification.APIInfo.Title)
+		log().Debug(fmt.Sprintf("Registering reference for OpenAPI specification %q", specification.APIInfo.Title))
 
-		for _, api := range specification.APIs {
-			log().Debugf("  - Scanning API [%s] %s", api.ID, api.Name)
-			r.Path(specID + "/reference/" + api.ID).Methods(http.MethodGet).HandlerFunc(c.apiHandler(specification, api))
-
-			version := api.CurrentVersion
-
-			for _, method := range api.Methods {
-				path := specID + "/reference/" + api.ID + "/" + method.ID
-
-				log().Debugf("    + method %s [%s]", path, method.Name)
-
-				// Add version->method to c.pathVersionMethod
-				if _, ok := c.pathVersionMethod[path]; !ok {
-					c.pathVersionMethod[path] = make(versionedMethod)
-
-					r.Path(path).Methods(http.MethodGet).HandlerFunc(c.methodHandler(specification, api, path))
-				}
-
-				c.pathVersionMethod[path][version] = method
-			}
+		for i := range specification.APIs {
+			api := &specification.APIs[i]
+			r.Path(specID + "/reference/" + api.ID).Methods(http.MethodGet).HandlerFunc(c.apiHandler(specification, *api))
+			c.registerMethods(r, specification, api, api.CurrentVersion, api.Methods)
 
 			for version, methods := range api.Versions {
-				for _, method := range methods {
-					log().Debugf("    + %s %s", method.ID, method.Name)
-
-					path := specID + "/reference/" + api.ID + "/" + method.ID
-					// Add version->resource to c.pathVersionResource
-					if _, ok := c.pathVersionMethod[path]; !ok {
-						c.pathVersionMethod[path] = make(versionedMethod)
-
-						r.Path(path).Methods(http.MethodGet).HandlerFunc(c.methodHandler(specification, api, path))
-					}
-
-					c.pathVersionMethod[path][version] = method
-				}
+				c.registerMethods(r, specification, api, version, methods)
 			}
 		}
 
 		log().Debug("  - Registering resources")
 
 		for version, resources := range specification.ResourceList {
-			log().Debugf("    - Version %s", version)
+			log().Debug(fmt.Sprintf("    - Version %s", version))
 
 			for id, resource := range resources {
 				path := specID + "/resources/" + id
-				log().Debugf("      + resource %s", id)
+				log().Debug(fmt.Sprintf("      + resource %s", id))
 
 				if _, ok := c.pathVersionResource[path]; !ok {
 					c.pathVersionResource[path] = make(versionedResource)
@@ -112,6 +93,20 @@ func (c *registrar) register(r *mux.Router) {
 				c.pathVersionResource[path][version] = resource
 			}
 		}
+	}
+}
+
+func (c *registrar) registerMethods(r *mux.Router, specification *spec.APISpecification, api *spec.APIGroup, version string, methods []spec.Method) {
+	for i := range methods {
+		method := &methods[i]
+
+		path := "/" + specification.ID + "/reference/" + api.ID + "/" + method.ID
+		if _, ok := c.pathVersionMethod[path]; !ok {
+			c.pathVersionMethod[path] = make(versionedMethod)
+			r.Path(path).Methods(http.MethodGet).HandlerFunc(c.methodHandler(specification, *api, path))
+		}
+
+		c.pathVersionMethod[path][version] = *method
 	}
 }
 
@@ -175,16 +170,16 @@ func (c *registrar) apiHandler(specification *spec.APISpecification, api spec.AP
 			tmpl = customTmpl
 		}
 
-		log().Tracef("-- template: %s  Version %s", tmpl, version)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("-- template: %s  Version %s", tmpl, version))
 
 		c.render.HTML(w, http.StatusOK, tmpl,
 			c.render.DefaultVars(req, specification,
 				render.Vars{
-					"Title":         api.Name,
+					titleVar:        api.Name,
 					"API":           api,
 					"Methods":       methods,
-					"Version":       version,
-					"Versions":      versions,
+					versionVar:      version,
+					versionsVar:     versions,
 					"LatestVersion": api.CurrentVersion,
 				}))
 	}
@@ -208,7 +203,7 @@ func (c *registrar) methodHandler(specification *spec.APISpecification, api spec
 			tmpl = customTmpl
 		}
 
-		log().Tracef("-- template: %s  Version %s", tmpl, version)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("-- template: %s  Version %s", tmpl, version))
 
 		// TODO default to latest if version not found, or 404 ?
 		method = c.pathVersionMethod[path][version]
@@ -216,11 +211,11 @@ func (c *registrar) methodHandler(specification *spec.APISpecification, api spec
 		c.render.HTML(w, http.StatusOK, tmpl,
 			c.render.DefaultVars(req, specification,
 				render.Vars{
-					"Title":         method.Name,
+					titleVar:        method.Name,
 					"API":           api,
 					"Method":        method,
-					"Version":       version,
-					"Versions":      versions,
+					versionVar:      version,
+					versionsVar:     versions,
 					"LatestVersion": api.CurrentVersion,
 				}))
 	}
@@ -252,7 +247,7 @@ func (c *registrar) globalResourceHandler(specification *spec.APISpecification, 
 
 		resource := c.pathVersionResource[path][version]
 
-		log().Debugf("Render resource %s", resource.ID)
+		log().DebugContext(req.Context(), fmt.Sprintf("Render resource %s", resource.ID))
 
 		tmpl := "resource"
 		customTmpl := "resources/" + resource.ID
@@ -261,8 +256,8 @@ func (c *registrar) globalResourceHandler(specification *spec.APISpecification, 
 			tmpl = customTmpl
 		}
 
-		log().Tracef("-- template: %s  Version %s", tmpl, version)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("-- template: %s  Version %s", tmpl, version))
 
-		c.render.HTML(w, http.StatusOK, tmpl, c.render.DefaultVars(req, specification, render.Vars{"Title": resource.Title, "Resource": resource, "Version": version, "Versions": versions}))
+		c.render.HTML(w, http.StatusOK, tmpl, c.render.DefaultVars(req, specification, render.Vars{titleVar: resource.Title, "Resource": resource, versionVar: version, versionsVar: versions}))
 	}
 }

@@ -2,14 +2,12 @@ package discover
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/url"
 	"strconv"
 	"testing"
 
 	"github.com/go-openapi/spec"
-	"github.com/go-openapi/swag"
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
@@ -18,6 +16,7 @@ import (
 
 func Test_fetchAPISpecs(t *testing.T) {
 	_ = config.LoadFixture("../fixtures")
+
 	viper.Set(config.SpecDir, "../tmp/specs")
 
 	type fields struct {
@@ -44,7 +43,7 @@ func Test_fetchAPISpecs(t *testing.T) {
 				invalidrewritesversion: false,
 			},
 			args: args{
-				host:       swag.String(""),
+				host:       new(""),
 				servicemap: nil,
 				spec:       "",
 			},
@@ -57,7 +56,7 @@ func Test_fetchAPISpecs(t *testing.T) {
 				invalidrewritesversion: false,
 			},
 			args: args{
-				host:       swag.String(""),
+				host:       new(""),
 				servicemap: &testServiceMap,
 				spec:       "",
 			},
@@ -70,7 +69,7 @@ func Test_fetchAPISpecs(t *testing.T) {
 				invalidrewritesversion: false,
 			},
 			args: args{
-				host:       swag.String(""),
+				host:       new(""),
 				servicemap: &ignoredServiceMap,
 				spec:       "",
 			},
@@ -170,50 +169,50 @@ func Test_fetchAPISpecs(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		var svcMap models.ServiceMap
-
-		// if servicemap provided, skip entire API server creation
-		if tt.args.servicemap != nil {
-			svcMap = *tt.args.servicemap
-		} else {
-			// create API server
-			serv := genServerAPI(tt.args.spec)
-			defer serv.Close()
-
-			// fetch host and port details
-			u, _ := url.Parse(serv.URL)
-			port, _ := strconv.Atoi(u.Port())
-
-			// create service details for API server
-			tmpSvc := &models.Service{
-				Hostname: u.Hostname(),
-				Ports: []*models.Port{
-					{
-						Name:     "http",
-						Port:     port,
-						Protocol: models.ProtocolHTTP,
-					},
-				},
-			}
-
-			// set host override value if one is provided
-			if tt.args.host != nil {
-				tmpSvc.Hostname = *tt.args.host
-			}
-
-			// create new servicemap based on service details
-			svcMap = models.NewServiceMap(tmpSvc)
-		}
-
-		// instantiate a new discoverer instance with servicemap
-		d := &Discoverer{
-			data: &state{
-				services: svcMap,
-			},
-			services: &fakeController{},
-		}
-
 		t.Run(tt.name, func(t *testing.T) {
+			var svcMap models.ServiceMap
+
+			// if servicemap provided, skip entire API server creation
+			if tt.args.servicemap != nil {
+				svcMap = *tt.args.servicemap
+			} else {
+				// create API server
+				serv := genServerAPI(tt.args.spec)
+				defer serv.Close()
+
+				// fetch host and port details
+				u, _ := url.Parse(serv.URL)
+				port, _ := strconv.Atoi(u.Port())
+
+				// create service details for API server
+				tmpSvc := &models.Service{
+					Hostname: u.Hostname(),
+					Ports: []*models.Port{
+						{
+							Name:     "http",
+							Port:     port,
+							Protocol: models.ProtocolHTTP,
+						},
+					},
+				}
+
+				// set host override value if one is provided
+				if tt.args.host != nil {
+					tmpSvc.Hostname = *tt.args.host
+				}
+
+				// create new servicemap based on service details
+				svcMap = models.NewServiceMap(tmpSvc)
+			}
+
+			// instantiate a new discoverer instance with servicemap
+			d := &Discoverer{
+				data: &state{
+					services: svcMap,
+				},
+				services: &fakeController{},
+			}
+
 			if tt.fields.invalidrewritespath {
 				prevRewrites := viper.GetString(config.SpecRewrites)
 
@@ -252,7 +251,7 @@ func Test_apiLoader_load(t *testing.T) {
 		{
 			name: "fail - location not set",
 			fields: fields{
-				hostoverride: swag.String(""),
+				hostoverride: new(""),
 				spec:         "",
 			},
 			wantErr: true,
@@ -260,7 +259,7 @@ func Test_apiLoader_load(t *testing.T) {
 		{
 			name: "fail - location not valid",
 			fields: fields{
-				hostoverride: swag.String("example.com:8080"),
+				hostoverride: new("example.com:8080"),
 				spec:         "",
 			},
 			wantErr: true,
@@ -335,7 +334,7 @@ func Test_apiLoader_load(t *testing.T) {
 				host = *tt.fields.hostoverride
 			}
 
-			_, err := loadSpec(context.Background(), host)
+			_, err := loadSpec(t.Context(), host)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("apiLoader.Load() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -345,6 +344,7 @@ func Test_apiLoader_load(t *testing.T) {
 
 func Test_processSpec(t *testing.T) {
 	_ = config.LoadFixture("../fixtures")
+
 	viper.Set(config.SpecDir, "../tmp/specs")
 
 	type args struct {
@@ -381,7 +381,7 @@ func Test_processSpec(t *testing.T) {
 			wantPath: "127.0.0.1",
 			want: &spec.Swagger{
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -398,7 +398,7 @@ func Test_processSpec(t *testing.T) {
 			wantPath: "myservice",
 			want: &spec.Swagger{
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -416,7 +416,7 @@ func Test_processSpec(t *testing.T) {
 							Paths: map[string]spec.PathItem{
 								"/fake/private/api": {
 									VendorExtensible: spec.VendorExtensible{
-										Extensions: map[string]interface{}{
+										Extensions: map[string]any{
 											"x-visibility": "private",
 										},
 									},
@@ -432,7 +432,7 @@ func Test_processSpec(t *testing.T) {
 					Paths: &spec.Paths{},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -450,21 +450,21 @@ func Test_processSpec(t *testing.T) {
 							Paths: map[string]spec.PathItem{
 								"/fake/private/api": {
 									VendorExtensible: spec.VendorExtensible{
-										Extensions: map[string]interface{}{
+										Extensions: map[string]any{
 											"x-visibility": "private",
 										},
 									},
 								},
 								"/second/fake/private/api": {
 									VendorExtensible: spec.VendorExtensible{
-										Extensions: map[string]interface{}{
+										Extensions: map[string]any{
 											"x-visibility": "private",
 										},
 									},
 								},
 								"/fake/public/api": {
 									VendorExtensible: spec.VendorExtensible{
-										Extensions: map[string]interface{}{
+										Extensions: map[string]any{
 											"x-visibility": "public",
 										},
 									},
@@ -482,7 +482,7 @@ func Test_processSpec(t *testing.T) {
 						Paths: map[string]spec.PathItem{
 							"/fake/public/api": {
 								VendorExtensible: spec.VendorExtensible{
-									Extensions: map[string]interface{}{
+									Extensions: map[string]any{
 										"x-visibility": "public",
 									},
 								},
@@ -492,7 +492,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -512,7 +512,7 @@ func Test_processSpec(t *testing.T) {
 									PathItemProps: spec.PathItemProps{
 										Get: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "private",
 												},
 											},
@@ -534,7 +534,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -554,14 +554,14 @@ func Test_processSpec(t *testing.T) {
 									PathItemProps: spec.PathItemProps{
 										Get: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "private",
 												},
 											},
 										},
 										Post: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "public",
 												},
 											},
@@ -583,7 +583,7 @@ func Test_processSpec(t *testing.T) {
 								PathItemProps: spec.PathItemProps{
 									Post: &spec.Operation{
 										VendorExtensible: spec.VendorExtensible{
-											Extensions: map[string]interface{}{
+											Extensions: map[string]any{
 												"x-visibility": "public",
 											},
 										},
@@ -595,7 +595,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -643,7 +643,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -663,35 +663,35 @@ func Test_processSpec(t *testing.T) {
 									PathItemProps: spec.PathItemProps{
 										Get: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "private",
 												},
 											},
 										},
 										Post: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "private",
 												},
 											},
 										},
 										Patch: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "private",
 												},
 											},
 										},
 										Put: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "private",
 												},
 											},
 										},
 										Delete: &spec.Operation{
 											VendorExtensible: spec.VendorExtensible{
-												Extensions: map[string]interface{}{
+												Extensions: map[string]any{
 													"x-visibility": "private",
 												},
 											},
@@ -715,7 +715,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -732,7 +732,7 @@ func Test_processSpec(t *testing.T) {
 						Definitions: spec.Definitions{
 							"object1": spec.Schema{
 								VendorExtensible: spec.VendorExtensible{
-									Extensions: map[string]interface{}{
+									Extensions: map[string]any{
 										"x-visibility": "private",
 									},
 								},
@@ -744,7 +744,7 @@ func Test_processSpec(t *testing.T) {
 			wantPath: "127.0.0.1",
 			want: &spec.Swagger{
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -761,14 +761,14 @@ func Test_processSpec(t *testing.T) {
 						Definitions: spec.Definitions{
 							"object1": spec.Schema{
 								VendorExtensible: spec.VendorExtensible{
-									Extensions: map[string]interface{}{
+									Extensions: map[string]any{
 										"x-visibility": "private",
 									},
 								},
 							},
 							"object2": spec.Schema{
 								VendorExtensible: spec.VendorExtensible{
-									Extensions: map[string]interface{}{
+									Extensions: map[string]any{
 										"x-visibility": "public",
 									},
 								},
@@ -784,7 +784,7 @@ func Test_processSpec(t *testing.T) {
 					Definitions: spec.Definitions{
 						"object2": spec.Schema{
 							VendorExtensible: spec.VendorExtensible{
-								Extensions: map[string]interface{}{
+								Extensions: map[string]any{
 									"x-visibility": "public",
 								},
 							},
@@ -793,7 +793,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -807,7 +807,7 @@ func Test_processSpec(t *testing.T) {
 				rewriteSpec: nil,
 				svcSpec: &spec.Swagger{
 					VendorExtensible: spec.VendorExtensible{
-						Extensions: map[string]interface{}{
+						Extensions: map[string]any{
 							"x-mcmp-component-type": "core",
 						},
 					},
@@ -816,7 +816,7 @@ func Test_processSpec(t *testing.T) {
 			wantPath: "myservice",
 			want: &spec.Swagger{
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-mcmp-component-type": "core",
 						"x-groupby":             groupByCore,
 					},
@@ -831,7 +831,7 @@ func Test_processSpec(t *testing.T) {
 				rewriteSpec: nil,
 				svcSpec: &spec.Swagger{
 					VendorExtensible: spec.VendorExtensible{
-						Extensions: map[string]interface{}{
+						Extensions: map[string]any{
 							"x-mcmp-component-type": "private-cloud",
 						},
 					},
@@ -840,7 +840,7 @@ func Test_processSpec(t *testing.T) {
 			wantPath: "myservice",
 			want: &spec.Swagger{
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-mcmp-component-type": "private-cloud",
 						"x-groupby":             groupByPrivate,
 					},
@@ -855,7 +855,7 @@ func Test_processSpec(t *testing.T) {
 				rewriteSpec: nil,
 				svcSpec: &spec.Swagger{
 					VendorExtensible: spec.VendorExtensible{
-						Extensions: map[string]interface{}{
+						Extensions: map[string]any{
 							"x-mcmp-component-type": "public-cloud",
 						},
 					},
@@ -864,7 +864,7 @@ func Test_processSpec(t *testing.T) {
 			wantPath: "myservice",
 			want: &spec.Swagger{
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-mcmp-component-type": "public-cloud",
 						"x-groupby":             groupByPublic,
 					},
@@ -888,7 +888,7 @@ func Test_processSpec(t *testing.T) {
 						},
 					},
 					VendorExtensible: spec.VendorExtensible{
-						Extensions: map[string]interface{}{
+						Extensions: map[string]any{
 							"x-mcmp-component-type": "core",
 						},
 					},
@@ -906,7 +906,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-mcmp-component-type": "core",
 						"x-groupby":             groupBySP,
 					},
@@ -930,7 +930,7 @@ func Test_processSpec(t *testing.T) {
 						},
 					},
 					VendorExtensible: spec.VendorExtensible{
-						Extensions: map[string]interface{}{
+						Extensions: map[string]any{
 							"x-mcmp-component-type": "core",
 						},
 					},
@@ -948,7 +948,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-mcmp-component-type": "core",
 						"x-groupby":             groupBySP,
 					},
@@ -972,7 +972,7 @@ func Test_processSpec(t *testing.T) {
 						},
 					},
 					VendorExtensible: spec.VendorExtensible{
-						Extensions: map[string]interface{}{
+						Extensions: map[string]any{
 							"x-mcmp-component-type": "private-cloud",
 						},
 					},
@@ -990,7 +990,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-mcmp-component-type": "private-cloud",
 						"x-groupby":             "Custom Group 1",
 					},
@@ -1043,7 +1043,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -1097,7 +1097,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},
@@ -1179,7 +1179,7 @@ func Test_processSpec(t *testing.T) {
 					},
 				},
 				VendorExtensible: spec.VendorExtensible{
-					Extensions: map[string]interface{}{
+					Extensions: map[string]any{
 						"x-groupby": groupByDefault,
 					},
 				},

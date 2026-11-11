@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 )
 
@@ -55,13 +56,7 @@ func (m ServiceMap) HasAll(items ...*Service) bool {
 
 // HasAny returns true if any items are contained in the set.
 func (m ServiceMap) HasAny(items ...*Service) bool {
-	for _, item := range items {
-		if m.Has(item) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(items, m.Has)
 }
 
 // List returns the contents as a sorted Service slice.
@@ -133,13 +128,7 @@ func (m DeploymentMap) HasAll(items ...*Deployment) bool {
 
 // HasAny returns true if any items are contained in the set.
 func (m DeploymentMap) HasAny(items ...*Deployment) bool {
-	for _, item := range items {
-		if m.Has(item) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(items, m.Has)
 }
 
 // List returns the contents as a sorted Deployment slice.

@@ -2,68 +2,78 @@
 package logger
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	stdlog "log"
+	"log/slog"
+	"os"
+	"strings"
 	"sync"
-
-	"github.com/sirupsen/logrus"
 )
 
 var (
-	initialize sync.Once
-	_logger    logrus.Ext1FieldLogger
+	errInvalidLevel = errors.New("invalid log level")
+	initialize      sync.Once
+	level           slog.LevelVar
+	instance        = newLogger(os.Stderr)
 )
 
-// RFC3339NanoFixed is time.RFC3339Nano with nanoseconds padded using zeros to
-// ensure the formatted time is always the same number of characters.
+func newLogger(output io.Writer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(output, &slog.HandlerOptions{
+		Level: &level,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				return slog.String(slog.TimeKey, attr.Value.Time().Format(RFC3339NanoFixed))
+			}
+
+			if attr.Key == slog.LevelKey && attr.Value.Any() == LevelTrace {
+				return slog.String(slog.LevelKey, "TRACE")
+			}
+
+			return attr
+		},
+	}))
+}
+
+// RFC3339NanoFixed includes nanoseconds padded to a fixed width.
 const RFC3339NanoFixed = "2006-01-02T15:04:05.000000000Z07:00"
 
-// Logger configures a logger instance and returns instance.
-func Logger() logrus.Ext1FieldLogger {
-	l := newLogger()
+// LevelTrace preserves the detailed diagnostics below slog's debug level.
+const LevelTrace slog.Level = slog.LevelDebug - 4
 
-	return l
-}
-
-// SetLevel sets the level at which log messages are published/written.
-func SetLevel(level string) {
-	newLogger()
-
-	// If there's no explicit logging level specified, set the level to INFO
-	if level == "" {
-		level = "info"
-	}
-
-	loglevel, err := logrus.ParseLevel(level)
-	if err == nil {
-		// set default logger and the custom logger levels
-		logrus.SetLevel(loglevel)
-		_logger.(*logrus.Entry).Logger.SetLevel(loglevel)
-	}
-}
-
-func newLogger() logrus.Ext1FieldLogger {
+// Logger returns the shared structured logger.
+func Logger() *slog.Logger {
 	initialize.Do(func() {
-		l := logrus.New()
-		// configure the default logger to include timestamps and quote empty fields to make visually
-		// seeing an empty Field easier. These configurations will not impact or influence the
-		// configuration of the logstash hook below.
-		l.Formatter = &logrus.TextFormatter{
-			TimestampFormat:  RFC3339NanoFixed,
-			FullTimestamp:    true,
-			QuoteEmptyFields: true,
-		}
-
-		_logger = logrus.NewEntry(l)
-
-		// disable any flags that result in a prefix to the message
-		// otherwise there will be duplicate timestamps, etc.
+		slog.SetDefault(instance)
 		stdlog.SetFlags(0)
-		// use WriterLevel to define at what level library code messages should
-		// be included into the logs. Most of the time the messages should be silent
-		// unless additional diagnostics are required.
-		stdlog.SetOutput(_logger.(*logrus.Entry).WriterLevel(logrus.DebugLevel))
-		_logger.Debug("Logger initialized")
+		stdlog.SetOutput(slog.NewLogLogger(instance.Handler(), slog.LevelDebug).Writer())
 	})
 
-	return _logger
+	return instance
+}
+
+// SetLevel changes the level for existing loggers, including package loggers.
+func SetLevel(value string) error {
+	var next slog.Level
+
+	switch strings.ToLower(value) {
+	case "", "info":
+		next = slog.LevelInfo
+	case "trace":
+		next = LevelTrace
+	case "debug":
+		next = slog.LevelDebug
+	case "warn", "warning":
+		next = slog.LevelWarn
+	case "error":
+		next = slog.LevelError
+	default:
+		return fmt.Errorf("%w %q: use trace, debug, info, warn, or error", errInvalidLevel, value)
+	}
+
+	Logger()
+	level.Set(next)
+
+	return nil
 }

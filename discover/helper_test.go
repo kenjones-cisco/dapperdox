@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kenjones-cisco/dapperdox/discover/models"
 )
@@ -100,31 +100,31 @@ var testDeployments = []*models.Deployment{
 	{
 		Name:              "abc-svc",
 		Namespace:         "mcmp-rtp",
-		CreationTimestamp: v1.NewTime(time.Now()),
+		CreationTimestamp: metav1.NewTime(time.Now()),
 		Version:           "1",
 	},
 	{
 		Name:              "bob-svc",
 		Namespace:         "mcmp-rtp",
-		CreationTimestamp: v1.NewTime(time.Now()),
+		CreationTimestamp: metav1.NewTime(time.Now()),
 		Version:           "13",
 	},
 	{
 		Name:              "cat-svc",
 		Namespace:         "mcmp-rtp",
-		CreationTimestamp: v1.NewTime(time.Now()),
+		CreationTimestamp: metav1.NewTime(time.Now()),
 		Version:           "7",
 	},
 	{
 		Name:              "dog-svc",
 		Namespace:         "mcmp-rtp",
-		CreationTimestamp: v1.NewTime(time.Now()),
+		CreationTimestamp: metav1.NewTime(time.Now()),
 		Version:           "4",
 	},
 	{
 		Name:              "foo-svc",
 		Namespace:         "mcmp-rtp",
-		CreationTimestamp: v1.NewTime(time.Now()),
+		CreationTimestamp: metav1.NewTime(time.Now()),
 		Version:           "9",
 	},
 }

@@ -4,6 +4,7 @@ package asset
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +31,12 @@ type Catalog struct {
 
 var sectionSplitRegex = regexp.MustCompile(`\[\[[\w\-/]+\]\]`)
 
+var (
+	errMissingAsset    = errors.New("asset not found")
+	errMissingSections = errors.New("no sections defined in overlay")
+	errHTMLAsset       = errors.New("use .tmpl for HTML template fragments")
+)
+
 // NewCatalog reads all configured assets, including sections for APIs not yet discovered.
 // Earlier directories win, matching the theme and overlay precedence.
 func NewCatalog() (*Catalog, error) {
@@ -38,6 +45,7 @@ func NewCatalog() (*Catalog, error) {
 	rewrite := viper.GetStringMapString(config.DocumentRewriteURL)
 
 	const rewritePairSize = 2
+
 	replacements := make([]string, 0, len(rewrite)*rewritePairSize)
 	keys := make([]string, 0, len(rewrite))
 
@@ -56,66 +64,10 @@ func NewCatalog() (*Catalog, error) {
 		return nil, err
 	}
 
-	custom, defaults := viper.GetString(config.AssetsDir), viper.GetString(config.DefaultAssetsDir)
-	theme := viper.GetString(config.Theme)
-
-	type source struct{ dir, prefix string }
-
-	var sources []source
-
-	addSections := func(root string) {
-		sources = append(sources, source{filepath.Join(root, "sections"), "assets/templates"})
-	}
-
-	if custom != "" {
-		sources = append(sources,
-			source{filepath.Join(custom, "templates"), "assets/templates"},
-			source{filepath.Join(custom, "static"), "assets/static"},
-			source{filepath.Join(custom, "themes", theme), "assets"})
-
-		addSections(custom)
-	}
-
-	if theme != "" {
-		dir := filepath.Join(defaults, "themes")
-		if override := viper.GetString(config.ThemeDir); override != "" {
-			dir = override
-		}
-
-		sources = append(sources, source{filepath.Join(dir, theme), "assets"})
-	}
-
-	if theme != "default" {
-		sources = append(sources, source{filepath.Join(defaults, "themes", "default"), "assets"})
-	}
-
-	addSections(defaults)
-
-	sources = append(sources,
-		source{filepath.Join(defaults, "templates"), "assets/templates"},
-		source{filepath.Join(defaults, "static"), "assets/static"})
-	for _, src := range sources {
+	for _, src := range catalogSources() {
 		if strings.HasSuffix(src.dir, string(filepath.Separator)+"sections") {
-			entries, err := os.ReadDir(src.dir)
-			if os.IsNotExist(err) {
-				continue
-			}
-
-			if err != nil {
-				return nil, fmt.Errorf("scan sections %s: %w", src.dir, err)
-			}
-
-			for _, entry := range entries {
-				if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-					continue
-				}
-
-				for _, part := range []string{"templates", "static"} {
-					prefix := filepath.Join("assets", part, entry.Name(), part)
-					if err := c.compile(filepath.Join(src.dir, entry.Name(), part), prefix); err != nil {
-						return nil, err
-					}
-				}
+			if err := c.compileSections(src.dir); err != nil {
+				return nil, err
 			}
 
 			continue
@@ -129,13 +81,61 @@ func NewCatalog() (*Catalog, error) {
 	return c, nil
 }
 
+type assetSource struct{ dir, prefix string }
+
+const (
+	templatePrefix = "assets/templates"
+	assetPrefix    = "assets"
+)
+
+func catalogSources() []assetSource {
+	custom, defaults := viper.GetString(config.AssetsDir), viper.GetString(config.DefaultAssetsDir)
+	theme := viper.GetString(config.Theme)
+
+	var sources []assetSource
+
+	addSections := func(root string) {
+		sources = append(sources, assetSource{filepath.Join(root, "sections"), templatePrefix})
+	}
+
+	if custom != "" {
+		sources = append(sources,
+			assetSource{filepath.Join(custom, "templates"), templatePrefix},
+			assetSource{filepath.Join(custom, "static"), "assets/static"},
+			assetSource{filepath.Join(custom, "themes", theme), assetPrefix})
+
+		addSections(custom)
+	}
+
+	if theme != "" {
+		dir := filepath.Join(defaults, "themes")
+		if override := viper.GetString(config.ThemeDir); override != "" {
+			dir = override
+		}
+
+		sources = append(sources, assetSource{filepath.Join(dir, theme), assetPrefix})
+	}
+
+	if theme != "default" {
+		sources = append(sources, assetSource{filepath.Join(defaults, "themes", "default"), assetPrefix})
+	}
+
+	addSections(defaults)
+
+	sources = append(sources,
+		assetSource{filepath.Join(defaults, "templates"), templatePrefix},
+		assetSource{filepath.Join(defaults, "static"), "assets/static"})
+
+	return sources
+}
+
 // Asset returns a copy so callers cannot mutate the published catalog.
 func (c *Catalog) Asset(name string) ([]byte, error) {
 	if data, ok := c.bindata[strings.ReplaceAll(name, "\\", "/")]; ok {
 		return bytes.Clone(data), nil
 	}
 
-	return nil, fmt.Errorf("asset %s not found", name)
+	return nil, fmt.Errorf("%w: %s", errMissingAsset, name)
 }
 
 // Names returns asset names in stable order.
@@ -156,6 +156,32 @@ func (c *Catalog) RuleCount() int { return len(c.gfmReplace) }
 // MetaData returns a case-insensitive metadata field.
 func (c *Catalog) MetaData(filename, name string) string {
 	return c.metadata[strings.ReplaceAll(filename, "\\", "/")][strings.ToLower(name)]
+}
+
+func (c *Catalog) compileSections(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("scan sections %s: %w", dir, err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		for _, part := range []string{"templates", "static"} {
+			prefix := filepath.Join(assetPrefix, part, entry.Name(), part)
+			if err := c.compile(filepath.Join(dir, entry.Name(), part), prefix); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (c *Catalog) compile(dir, prefix string) error {
@@ -183,50 +209,54 @@ func (c *Catalog) compile(dir, prefix string) error {
 			return nil
 		}
 
-		buf, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-
-		relative, relErr := filepath.Rel(dir, path)
-		if relErr != nil {
-			return relErr
-		}
-
-		ext := filepath.Ext(path)
-
-		var meta map[string]string
-
-		switch ext {
-		case ".md":
-			mdname := strings.TrimSuffix(relative, ext)
-
-			buf, meta = processMetadata(buf)
-			if strings.EqualFold(meta["overlay"], "true") {
-				sections, headings := splitOnSection(string(buf))
-				if sections == nil {
-					return fmt.Errorf("no sections defined in overlay %s", path)
-				}
-
-				for i, heading := range headings {
-					c.storeTemplate(prefix, filepath.Join(mdname, heading, "overlay.tmpl"), c.processMarkdown([]byte(sections[i])), meta)
-				}
-			} else {
-				c.storeTemplate(prefix, mdname+".tmpl", c.processMarkdown(buf), meta)
-			}
-		case ".tmpl":
-			buf, meta = processMetadata(buf)
-			c.storeTemplate(prefix, relative, buf, meta)
-		case ".html":
-			return fmt.Errorf("refusing .html asset %s: use .tmpl for HTML template fragments", path)
-		default:
-			c.storeTemplate(prefix, relative, buf, meta)
-		}
-
-		return nil
+		return c.compileFile(dir, path, prefix)
 	})
 	if err != nil {
 		return fmt.Errorf("compile assets %s: %w", dir, err)
+	}
+
+	return nil
+}
+
+func (c *Catalog) compileFile(dir, path, prefix string) error {
+	buf, readErr := os.ReadFile(path) //nolint:gosec // Paths come from walking operator-configured asset directories.
+	if readErr != nil {
+		return readErr
+	}
+
+	relative, relErr := filepath.Rel(dir, path)
+	if relErr != nil {
+		return relErr
+	}
+
+	ext := filepath.Ext(path)
+
+	var meta map[string]string
+
+	switch ext {
+	case ".md":
+		mdname := strings.TrimSuffix(relative, ext)
+
+		buf, meta = processMetadata(buf)
+		if strings.EqualFold(meta["overlay"], "true") {
+			sections, headings := splitOnSection(string(buf))
+			if sections == nil {
+				return fmt.Errorf("%w %s", errMissingSections, path)
+			}
+
+			for i, heading := range headings {
+				c.storeTemplate(prefix, filepath.Join(mdname, heading, "overlay.tmpl"), c.processMarkdown([]byte(sections[i])), meta)
+			}
+		} else {
+			c.storeTemplate(prefix, mdname+".tmpl", c.processMarkdown(buf), meta)
+		}
+	case ".tmpl":
+		buf, meta = processMetadata(buf)
+		c.storeTemplate(prefix, relative, buf, meta)
+	case ".html":
+		return fmt.Errorf("refusing .html asset %s: %w", path, errHTMLAsset)
+	default:
+		c.storeTemplate(prefix, relative, buf, meta)
 	}
 
 	return nil
@@ -253,8 +283,8 @@ func (c *Catalog) processMarkdown(doc []byte) []byte {
 	return html
 }
 
-func processMetadata(doc []byte) ([]byte, map[string]string) {
-	meta := make(map[string]string)
+func processMetadata(doc []byte) (body []byte, meta map[string]string) {
+	meta = make(map[string]string)
 
 	lines := strings.Split(string(doc), "\n")
 	for i, line := range lines {
@@ -282,14 +312,14 @@ func processMetadata(doc []byte) ([]byte, map[string]string) {
 	return nil, meta
 }
 
-func splitOnSection(text string) ([]string, []string) {
+func splitOnSection(text string) (sections, headings []string) {
 	indexes := sectionSplitRegex.FindAllStringIndex(text, -1)
 	if indexes == nil {
 		return nil, nil
 	}
 
 	last := 0
-	sections, headings := make([]string, len(indexes)), make([]string, len(indexes))
+	sections, headings = make([]string, len(indexes)), make([]string, len(indexes))
 
 	for i, element := range indexes {
 		if i > 0 {
@@ -322,7 +352,7 @@ func (c *Catalog) compileGFMMap() error {
 	var rules []*gfmReplacer
 
 	for _, path := range candidates {
-		file, err := os.Open(path)
+		file, err := os.Open(path) //nolint:gosec // Paths are selected from operator-configured markdown mapping directories.
 		if os.IsNotExist(err) {
 			continue
 		}

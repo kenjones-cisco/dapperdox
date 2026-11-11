@@ -20,7 +20,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package network
 
 import (
+	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 
 	"github.com/spf13/viper"
@@ -30,7 +32,7 @@ import (
 
 // NewListener creates a new network Listener.
 func NewListener() (net.Listener, error) {
-	log().Infof("listening on %s for unsecured connections", viper.GetString(config.BindAddr))
+	log().Info(fmt.Sprintf("listening on %s for unsecured connections", viper.GetString(config.BindAddr)))
 
 	return newListener()
 }
@@ -71,11 +73,11 @@ func NewSecuredListener() (net.Listener, error) {
 		return nil, err
 	}
 
-	log().Infof("listening on %s for SECURED connections", viper.GetString(config.BindAddr))
+	log().Info(fmt.Sprintf("listening on %s for SECURED connections", viper.GetString(config.BindAddr)))
 
 	return tls.NewListener(l, tlscfg), nil
 }
 
 func newListener() (net.Listener, error) {
-	return net.Listen("tcp", viper.GetString(config.BindAddr))
+	return new(net.ListenConfig).Listen(context.Background(), "tcp", viper.GetString(config.BindAddr))
 }

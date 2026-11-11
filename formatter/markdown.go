@@ -97,17 +97,17 @@ func (*renderer) Header(out *bytes.Buffer, text func() bool, level int, _ string
 
 // extractText returns the recursive concatenation of the text content of an html node.
 func extractText(n *html.Node) string {
-	var out string
+	var out strings.Builder
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.TextNode {
-			out += c.Data
+			out.WriteString(c.Data)
 		} else {
-			out += extractText(c)
+			out.WriteString(extractText(c))
 		}
 	}
 
-	return out
+	return out.String()
 }
 
 // TODO: Clean up and improve this code.
@@ -118,7 +118,7 @@ func (*renderer) BlockCode(out *bytes.Buffer, text []byte, lang string) {
 	// parse out the language name
 	count := 0
 
-	for _, elt := range strings.Fields(lang) {
+	for elt := range strings.FieldsSeq(lang) {
 		if elt[0] == '.' {
 			elt = elt[1:]
 		}
@@ -237,52 +237,7 @@ func highlightDiff(src []byte) ([]byte, bool) {
 			}
 		default:
 			if lastDel != -1 || lastIns != -1 {
-				if lastDel == -1 {
-					lastDel = lastIns
-				} else if lastIns == -1 {
-					lastIns = lineIndex
-				}
-
-				beginOffsetLeft := lineStarts[lastDel]
-				beginOffsetRight := lineStarts[lastIns]
-
-				anns = append(anns,
-					&annotate.Annotation{
-						Start:     beginOffsetLeft,
-						End:       lineStarts[lastIns],
-						Left:      []byte(`<span class="gd input-block">`),
-						Right:     []byte(`</span>`),
-						WantInner: 0,
-					},
-					&annotate.Annotation{
-						Start:     beginOffsetRight,
-						End:       lineStarts[lineIndex],
-						Left:      []byte(`<span class="gi input-block">`),
-						Right:     []byte(`</span>`),
-						WantInner: 0,
-					},
-				)
-
-				if lineFirstChar != '@' {
-					// This is needed to filter out the "-" and "+" at the beginning of each line from being highlighted.
-					// TODO: Still not completely filtered out.
-					leftContent := ""
-					for line := lastDel; line < lastIns; line++ {
-						leftContent += "\x00" + string(lines[line][1:]) + "\n"
-					}
-
-					rightContent := ""
-					for line := lastIns; line < lineIndex; line++ {
-						rightContent += "\x00" + string(lines[line][1:]) + "\n"
-					}
-
-					var sectionSegments [2][]*annotate.Annotation
-
-					highlight_diff.HighlightedDiffFunc(leftContent, rightContent, &sectionSegments, [2]int{beginOffsetLeft, beginOffsetRight})
-
-					anns = append(anns, sectionSegments[0]...)
-					anns = append(anns, sectionSegments[1]...)
-				}
+				anns = append(anns, diffBlockAnnotations(lines, lineStarts, lastDel, lastIns, lineIndex, lineFirstChar != '@')...)
 			}
 
 			lastDel, lastIns = -1, -1
@@ -297,6 +252,40 @@ func highlightDiff(src []byte) ([]byte, bool) {
 	}
 
 	return out, true
+}
+
+func diffBlockAnnotations(lines [][]byte, starts []int, deleted, inserted, end int, highlight bool) []*annotate.Annotation {
+	if deleted == -1 {
+		deleted = inserted
+	} else if inserted == -1 {
+		inserted = end
+	}
+
+	left, right := starts[deleted], starts[inserted]
+	annotations := []*annotate.Annotation{
+		{Start: left, End: starts[inserted], Left: []byte(`<span class="gd input-block">`), Right: []byte(`</span>`)},
+		{Start: right, End: starts[end], Left: []byte(`<span class="gi input-block">`), Right: []byte(`</span>`)},
+	}
+
+	if highlight {
+		var segments [2][]*annotate.Annotation
+		highlight_diff.HighlightedDiffFunc(diffContent(lines[deleted:inserted]), diffContent(lines[inserted:end]), &segments, [2]int{left, right})
+		annotations = append(annotations, segments[0]...)
+		annotations = append(annotations, segments[1]...)
+	}
+
+	return annotations
+}
+
+func diffContent(lines [][]byte) string {
+	var content strings.Builder
+	for _, line := range lines {
+		content.WriteByte(0)
+		content.Write(line[1:])
+		content.WriteByte('\n')
+	}
+
+	return content.String()
 }
 
 // Unexported blackfriday helpers.

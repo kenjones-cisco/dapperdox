@@ -24,16 +24,16 @@ const (
 	DocumentRewriteURL = "document.rewrite.url"
 	AllowOrigin        = "allow.origin"
 
-	// assets.
+	// DefaultAssetsDir selects the packaged assets directory.
 	DefaultAssetsDir = "default-assets-dir"
 	AssetsDir        = "assets-dir"
 	ShowAssets       = "author-show-assets"
 
-	// theme.
+	// Theme selects the documentation theme.
 	Theme    = "theme"
 	ThemeDir = "theme-dir"
 
-	// spec.
+	// SpecDir selects the specification directory.
 	SpecDir         = "spec-dir"
 	SpecFilename    = "spec-filename"
 	SpecDefaultHost = "spec.default.host"
@@ -42,7 +42,7 @@ const (
 	SpecGroupings   = "spec.groupings"
 	ForceSpecList   = "force-specification-list"
 
-	// auto-discovery configs.
+	// DiscoveryEnabled enables Kubernetes service discovery.
 	DiscoveryEnabled            = "discovery.enabled"
 	DiscoveryDomain             = "discovery.domain"
 	DiscoveryNamespace          = "discovery.namespace"

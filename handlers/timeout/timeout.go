@@ -22,10 +22,11 @@ package timeout
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
 // Handler returns a Handler that runs h with the given time limit.
@@ -60,6 +61,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		h.handler.ServeHTTP(tw, r)
+
 		done <- true
 	}()
 
@@ -69,10 +71,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case <-h.timeout():
 		tw.mu.Lock()
 		defer tw.mu.Unlock()
-		log().Trace("request timed out")
+
+		log().Log(context.Background(), logger.LevelTrace, "request timed out")
 
 		if !tw.wroteHeader {
-			log().Trace("headers not written, calling failure handler")
+			log().Log(context.Background(), logger.LevelTrace, "headers not written, calling failure handler")
 			h.failHandler.ServeHTTP(w, r)
 		}
 
@@ -95,10 +98,11 @@ func (tw *writer) Header() http.Header {
 func (tw *writer) Write(p []byte) (int, error) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
+
 	tw.wroteHeader = true // implicitly at least
 
 	if tw.timedOut {
-		return 0, errors.New("http: Handler timeout")
+		return 0, http.ErrHandlerTimeout
 	}
 
 	return tw.w.Write(p)

@@ -1,6 +1,7 @@
 package discover
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -23,7 +24,7 @@ type Queue interface {
 }
 
 // Handler specifies a function to apply on an object for a given event type.
-type Handler func(obj interface{}, event models.Event) error
+type Handler func(obj any, event models.Event) error
 
 // Task object for the event watchers; processes until handler succeeds.
 type Task struct {
@@ -33,7 +34,7 @@ type Task struct {
 }
 
 // NewTask creates a task from a work item.
-func NewTask(handler Handler, obj interface{}, event models.Event) Task {
+func NewTask(handler Handler, obj any, event models.Event) Task {
 	return Task{handler: handler, obj: obj, event: event}
 }
 
@@ -68,27 +69,22 @@ func (q *queueImpl) Push(item Task) {
 func (q *queueImpl) Run(stop <-chan struct{}) {
 	// Throttle processing up to smoothed 10 qps with bursts up to 100 qps
 	rateLimiter := flowcontrol.NewTokenBucketRateLimiter(qpsRate, qpsBurst)
+	defer rateLimiter.Stop()
+	defer q.finish()
 
 	var item Task
 
 	for {
 		select {
 		case <-stop:
-			q.lock.Lock()
-			q.closing = true
-			q.lock.Unlock()
-
 			return
 		default:
 		}
 
 		rateLimiter.Accept()
+
 		select {
 		case <-stop:
-			q.lock.Lock()
-			q.closing = true
-			q.lock.Unlock()
-
 			return
 		default:
 		}
@@ -106,36 +102,13 @@ func (q *queueImpl) Run(stop <-chan struct{}) {
 			q.active = true
 			q.lock.Unlock()
 
-			for {
-				if err := item.handler(item.obj, item.event); err != nil {
-					log().Errorf("Work item failed (%v), repeating after delay %v", err, q.delay)
-
-					timer := time.NewTimer(q.delay)
-					select {
-					case <-stop:
-						if !timer.Stop() {
-							select {
-							case <-timer.C:
-							default:
-							}
-						}
-
-						q.lock.Lock()
-						q.active = false
-						q.closing = true
-						q.lock.Unlock()
-
-						return
-					case <-timer.C:
-					}
-				} else {
-					q.lock.Lock()
-					q.active = false
-					q.lock.Unlock()
-
-					break
-				}
+			if !q.runTask(item, stop) {
+				return
 			}
+
+			q.lock.Lock()
+			q.active = false
+			q.lock.Unlock()
 		}
 	}
 }
@@ -145,6 +118,33 @@ func (q *queueImpl) Idle() bool {
 	defer q.lock.Unlock()
 
 	return len(q.queue) == 0 && !q.active
+}
+
+func (q *queueImpl) finish() {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	q.active = false
+	q.closing = true
+}
+
+func (q *queueImpl) runTask(item Task, stop <-chan struct{}) bool {
+	for {
+		if err := item.handler(item.obj, item.event); err != nil {
+			log().Error("work item failed; retrying", slog.Any("error", err), slog.Duration("delay", q.delay))
+		} else {
+			return true
+		}
+
+		timer := time.NewTimer(q.delay)
+		select {
+		case <-stop:
+			timer.Stop()
+
+			return false
+		case <-timer.C:
+		}
+	}
 }
 
 // ChainHandler applies handlers in a sequence.

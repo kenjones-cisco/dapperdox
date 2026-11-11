@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -45,7 +46,16 @@ const (
 	listenerCount   = 2
 )
 
+var errManagementAddress = errors.New("management address must use a loopback IP")
+
 func main() {
+	if err := run(); err != nil {
+		log.Logger().Error("documentation server failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	pflag.Usage = func() {
 		_, _ = fmt.Fprint(os.Stderr, "Usage:\n")
 		_, _ = fmt.Fprintf(os.Stderr, "  %s [OPTIONS]\n\n", version.ShortName)
@@ -54,6 +64,7 @@ func main() {
 	}
 	// parse the CLI flags
 	pflag.Parse()
+
 	_ = viper.BindPFlags(pflag.CommandLine)
 
 	if viper.GetBool(config.Version) {
@@ -63,7 +74,9 @@ func main() {
 
 	config.Init()
 
-	log.SetLevel(viper.GetString(config.LogLevel))
+	if err := log.SetLevel(viper.GetString(config.LogLevel)); err != nil {
+		return err
+	}
 
 	var chain http.Handler
 
@@ -73,13 +86,13 @@ func main() {
 		// initialize auto-discovery instance
 		discoverer, err := discover.NewDiscoverer()
 		if err != nil {
-			log.Logger().Fatalf("unable to create discoverer: %v", err)
+			return fmt.Errorf("create discoverer: %w", err)
 		}
 
 		// initialize updater instance
 		updater, err := handlers.NewAutoDiscoverUpdater(discoverer)
 		if err != nil {
-			log.Logger().Fatalf("initialize documentation: %v", err)
+			return fmt.Errorf("initialize documentation: %w", err)
 		}
 
 		defer updater.Close()
@@ -94,23 +107,10 @@ func main() {
 
 		chain, err = handlers.NewRouterChain()
 		if err != nil {
-			log.Logger().Fatalf("initialize documentation: %v", err)
+			return fmt.Errorf("initialize documentation: %w", err)
 		}
 
-		management = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/status" || r.Method != http.MethodGet {
-				http.NotFound(w, r)
-
-				return
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Cache-Control", "no-store")
-
-			if err := json.NewEncoder(w).Encode(map[string]bool{"ready": true}); err != nil {
-				log.Logger().WithError(err).Error("encode static documentation status")
-			}
-		})
+		management = http.HandlerFunc(staticStatus)
 	}
 
 	var listener net.Listener
@@ -124,12 +124,24 @@ func main() {
 	}
 
 	if err != nil {
-		log.Logger().Fatalf("Error listening on %s: %s", viper.GetString(config.BindAddr), err)
+		return fmt.Errorf("listen on %s: %w", viper.GetString(config.BindAddr), err)
 	}
 
-	err = serveDocumentation(listener, chain, management)
-	if err != nil {
-		log.Logger().Fatalf("documentation server: %v", err)
+	return serveDocumentation(listener, chain, management)
+}
+
+func staticStatus(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/status" || r.Method != http.MethodGet {
+		http.NotFound(w, r)
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+
+	if err := json.NewEncoder(w).Encode(map[string]bool{"ready": true}); err != nil {
+		log.Logger().ErrorContext(r.Context(), "encode static documentation status", slog.Any("error", err))
 	}
 }
 
@@ -151,12 +163,13 @@ func serveDocumentation(listener net.Listener, chain, management http.Handler) e
 
 	go func() { results <- server.Serve(listener) }()
 	go func() { results <- operator.Serve(managementListener) }()
+
 	select {
 	case err = <-results:
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		} else {
-			log.Logger().WithError(err).Error("documentation listener failed")
+			log.Logger().With(slog.Any("error", err)).Error("documentation listener failed")
 		}
 	case <-ctx.Done():
 	}
@@ -166,11 +179,11 @@ func serveDocumentation(listener net.Listener, chain, management http.Handler) e
 
 	for _, s := range []*http.Server{server, operator} {
 		if shutdownErr := s.Shutdown(shutdown); shutdownErr != nil {
-			log.Logger().WithError(shutdownErr).Error("shutdown documentation listener")
+			log.Logger().With(slog.Any("error", shutdownErr)).Error("shutdown documentation listener")
 			err = errors.Join(err, shutdownErr)
 
 			if closeErr := s.Close(); closeErr != nil {
-				log.Logger().WithError(closeErr).Error("close documentation listener")
+				log.Logger().With(slog.Any("error", closeErr)).Error("close documentation listener")
 				err = errors.Join(err, closeErr)
 			}
 		}
@@ -186,8 +199,8 @@ func listenManagement(address string) (net.Listener, error) {
 	}
 
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-		return nil, errors.New("management address must use a loopback IP")
+		return nil, errManagementAddress
 	}
 
-	return net.Listen("tcp", address)
+	return new(net.ListenConfig).Listen(context.Background(), "tcp", address)
 }
