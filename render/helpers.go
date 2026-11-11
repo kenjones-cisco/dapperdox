@@ -1,14 +1,22 @@
 package render
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+var (
+	errOddArguments = errors.New("expecting even number of arguments")
+	errNonStringKey = errors.New("expecting string for odd numbered arguments")
+)
 
 // Map creates a map with the provided arg pairs.
-func Map(args ...interface{}) (map[string]interface{}, error) {
+func Map(args ...any) (map[string]any, error) {
 	if len(args)%2 != 0 {
-		return nil, fmt.Errorf("expecting even number of arguments, got %d", len(args))
+		return nil, fmt.Errorf("%w, got %d", errOddArguments, len(args))
 	}
 
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	fn := ""
 
 	for _, v := range args {
@@ -19,7 +27,7 @@ func Map(args ...interface{}) (map[string]interface{}, error) {
 				continue
 			}
 
-			return m, fmt.Errorf("expecting string for odd numbered arguments, got %+v", v)
+			return m, fmt.Errorf("%w, got %+v", errNonStringKey, v)
 		}
 
 		m[fn] = v
@@ -30,14 +38,14 @@ func Map(args ...interface{}) (map[string]interface{}, error) {
 }
 
 // Arr returns a slice for a given argument list.
-func Arr(args ...interface{}) []interface{} {
+func Arr(args ...any) []any {
 	return args
 }
 
 // Extend extends the target map with the provided arg pairs.
-func Extend(target map[string]interface{}, args ...interface{}) (map[string]interface{}, error) {
+func Extend(target map[string]any, args ...any) (map[string]any, error) {
 	if len(args)%2 != 0 {
-		return nil, fmt.Errorf("expecting even number of arguments, got %d", len(args))
+		return nil, fmt.Errorf("%w, got %d", errOddArguments, len(args))
 	}
 
 	fn := ""
@@ -50,7 +58,7 @@ func Extend(target map[string]interface{}, args ...interface{}) (map[string]inte
 				continue
 			}
 
-			return target, fmt.Errorf("expecting string for odd numbered arguments, got %+v", v)
+			return target, fmt.Errorf("%w, got %+v", errNonStringKey, v)
 		}
 
 		target[fn] = v
@@ -61,7 +69,7 @@ func Extend(target map[string]interface{}, args ...interface{}) (map[string]inte
 }
 
 // FirstNotNil returns th first parameter that isn't nil.
-func FirstNotNil(args ...interface{}) interface{} {
+func FirstNotNil(args ...any) any {
 	for _, v := range args {
 		if v != nil {
 			return v

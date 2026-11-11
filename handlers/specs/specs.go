@@ -20,6 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package specs
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -30,6 +31,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
 // Register creates routes for each static resource.
@@ -102,7 +104,7 @@ func loadSpecsByDir() (map[string][]byte, error) {
 		return nil, fmt.Errorf("form specification path: %w", err)
 	}
 
-	log().Debugf("- Scanning base directory %s", base)
+	log().Debug(fmt.Sprintf("- Scanning base directory %s", base))
 
 	base = filepath.ToSlash(base)
 	specMap := make(map[string][]byte)
@@ -121,7 +123,7 @@ func loadSpecsByDir() (map[string][]byte, error) {
 			return nil
 		}
 
-		log().Debugf("  - %s", path)
+		log().Debug(fmt.Sprintf("  - %s", path))
 
 		path = filepath.ToSlash(path)
 		ext := filepath.Ext(path)
@@ -131,10 +133,10 @@ func loadSpecsByDir() (map[string][]byte, error) {
 			// Strip base path and file extension
 			route := strings.TrimPrefix(path, base)
 
-			log().Debugf("    = URL : %s", route)
-			log().Tracef("    + File: %s", path)
+			log().Debug(fmt.Sprintf("    = URL : %s", route))
+			log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("    + File: %s", path))
 
-			content, err := os.ReadFile(path)
+			content, err := os.ReadFile(path) //nolint:gosec // Paths come from the configured specification directory, not request input.
 			if err != nil {
 				return err
 			}

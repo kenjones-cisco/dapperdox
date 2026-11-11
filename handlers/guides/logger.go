@@ -1,11 +1,11 @@
 package guides
 
 import (
-	"github.com/sirupsen/logrus"
+	"log/slog"
 
 	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
-func log() logrus.Ext1FieldLogger {
-	return logger.Logger().WithField("pkg", "handlers.guides")
+func log() *slog.Logger {
+	return logger.Logger().With(slog.Any("pkg", "handlers.guides"))
 }

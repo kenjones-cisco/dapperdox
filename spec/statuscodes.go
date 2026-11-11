@@ -16,11 +16,13 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-// Package spec provides API spec loading and parsing.
 package spec
 
 import (
 	"bufio"
+	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,6 +31,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
 var (
@@ -38,55 +41,19 @@ var (
 
 // loadStatusCodes loads status code mappings.
 func loadStatusCodes() {
-	var statusfile string
-
-	if viper.GetString(config.AssetsDir) != "" {
-		statusfile = filepath.Join(viper.GetString(config.AssetsDir), "status_codes.csv")
-		log().Tracef("Looking in assets dir for %s", statusfile)
-
-		if _, err := os.Stat(statusfile); os.IsNotExist(err) {
-			statusfile = ""
-		}
-	}
-
-	if statusfile == "" && viper.GetString(config.ThemeDir) != "" {
-		statusfile = filepath.Join(viper.GetString(config.ThemeDir), viper.GetString(config.Theme), "status_codes.csv")
-		log().Tracef("Looking in theme dir for %s", statusfile)
-
-		if _, err := os.Stat(statusfile); os.IsNotExist(err) {
-			statusfile = ""
-		}
-	}
+	statusfile := statusCodeFile()
 
 	if statusfile == "" {
-		statusfile = filepath.Join(viper.GetString(config.DefaultAssetsDir), "themes", viper.GetString(config.Theme), "status_codes.csv")
-		log().Tracef("Looking in default theme dir for %s", statusfile)
-
-		if _, err := os.Stat(statusfile); os.IsNotExist(err) {
-			statusfile = ""
-		}
-	}
-
-	if statusfile == "" {
-		statusfile = filepath.Join(viper.GetString(config.DefaultAssetsDir), "themes", "default", "status_codes.csv")
-		log().Tracef("Looking in default theme %s", statusfile)
-
-		if _, err := os.Stat(statusfile); os.IsNotExist(err) {
-			statusfile = ""
-		}
-	}
-
-	if statusfile == "" {
-		log().Trace("No status code map file found.")
+		log().Log(context.Background(), logger.LevelTrace, "No status code map file found.")
 
 		return
 	}
 
-	log().Tracef("Processing HTTP status code file: %s", statusfile)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Processing HTTP status code file: %s", statusfile))
 
-	file, err := os.Open(statusfile)
+	file, err := os.Open(statusfile) //nolint:gosec // This path is selected from operator-configured asset directories.
 	if err != nil {
-		log().Errorf("Error: %s", err)
+		log().Error(fmt.Sprintf("Error: %s", err))
 
 		return
 	}
@@ -106,7 +73,7 @@ func loadStatusCodes() {
 
 		i, err := strconv.Atoi(line[0 : indexes[1]-1])
 		if err != nil {
-			log().Errorf("Invalid HTTP status code in csv file: %q", line)
+			log().Error(fmt.Sprintf("Invalid HTTP status code in csv file: %q", line))
 
 			continue
 		}
@@ -115,8 +82,36 @@ func loadStatusCodes() {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log().Errorf("Error: %s", err)
+		log().Error(fmt.Sprintf("Error: %s", err))
 	}
+}
+
+func statusCodeFile() string {
+	var candidates []string
+
+	if assets := viper.GetString(config.AssetsDir); assets != "" {
+		candidates = append(candidates, filepath.Join(assets, "status_codes.csv"))
+	}
+
+	theme := viper.GetString(config.Theme)
+	if themeDir := viper.GetString(config.ThemeDir); themeDir != "" {
+		candidates = append(candidates, filepath.Join(themeDir, theme, "status_codes.csv"))
+	}
+
+	defaults := viper.GetString(config.DefaultAssetsDir)
+
+	candidates = append(candidates,
+		filepath.Join(defaults, "themes", theme, "status_codes.csv"),
+		filepath.Join(defaults, "themes", "default", "status_codes.csv"))
+	for _, path := range candidates {
+		log().Log(context.Background(), logger.LevelTrace, "looking for HTTP status descriptions", slog.String("path", path))
+
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			return path
+		}
+	}
+
+	return ""
 }
 
 func httpStatusDescription(status int) string {

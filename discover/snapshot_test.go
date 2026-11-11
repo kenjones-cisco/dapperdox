@@ -196,10 +196,12 @@ func TestSnapshotDoesNotResurrectAPIAfterInFlightFetchAndDelete(t *testing.T) {
 	}
 
 	fetchDone := make(chan struct{})
+
 	go func() {
 		d.discover()
 		close(fetchDone)
 	}()
+
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
@@ -207,6 +209,7 @@ func TestSnapshotDoesNotResurrectAPIAfterInFlightFetchAndDelete(t *testing.T) {
 	}
 
 	deleteDone := make(chan struct{})
+
 	go func() {
 		d.updateServices(service, models.EventDelete)
 		close(deleteDone)
@@ -219,6 +222,7 @@ func TestSnapshotDoesNotResurrectAPIAfterInFlightFetchAndDelete(t *testing.T) {
 		if len(snapshot.APIs) == 0 && len(snapshot.Specs) == 0 {
 			break
 		}
+
 		select {
 		case <-deadline:
 			t.Fatal("delete did not remove API state while fetch was in flight")
@@ -227,11 +231,13 @@ func TestSnapshotDoesNotResurrectAPIAfterInFlightFetchAndDelete(t *testing.T) {
 	}
 
 	close(release)
+
 	select {
 	case <-fetchDone:
 	case <-time.After(time.Second):
 		t.Fatal("in-flight fetch did not finish")
 	}
+
 	select {
 	case <-deleteDone:
 	case <-time.After(time.Second):
@@ -257,6 +263,7 @@ func TestChangeCallbackCanReadSnapshot(t *testing.T) {
 
 				close(callbackDone)
 			}()
+
 			select {
 			case <-callbackDone:
 			case <-time.After(time.Second):
@@ -324,6 +331,7 @@ func TestRunKeepsUnsynchronizedInventoryUnavailable(t *testing.T) {
 func TestShutdownCancelsSpecFetch(t *testing.T) {
 	oldTimeout := viper.GetDuration(config.DiscoverySpecLoadTimeout)
 	oldRewrites := viper.GetString(config.SpecRewrites)
+
 	viper.Set(config.DiscoverySpecLoadTimeout, time.Minute)
 	viper.Set(config.SpecRewrites, "")
 
@@ -346,6 +354,7 @@ func TestShutdownCancelsSpecFetch(t *testing.T) {
 					}
 
 					close(entered)
+
 					select {
 					case <-r.Context().Done():
 						close(canceled)
@@ -442,6 +451,7 @@ func waitForSnapshot(t *testing.T, d *Discoverer, predicate func(Snapshot) bool)
 		if predicate(d.Snapshot()) {
 			return
 		}
+
 		select {
 		case <-deadline:
 			t.Fatal("timed out waiting for discovery snapshot")

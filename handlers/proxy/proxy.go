@@ -20,6 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 package proxy
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -29,10 +31,12 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
 type responseCapture struct {
 	http.ResponseWriter
+
 	statusCode int
 }
 
@@ -55,33 +59,31 @@ func Register(r *mux.Router) {
 func register(rtr *mux.Router, routePattern, target string) {
 	u, _ := url.Parse(target)
 
-	log().Tracef("+ %s -> %s", routePattern, target)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("+ %s -> %s", routePattern, target))
 
-	proxy := httputil.NewSingleHostReverseProxy(u)
-	od := proxy.Director
-
-	proxy.Director = func(r *http.Request) {
-		od(r)
-		r.Host = r.URL.Host // Rewrite Host
+	proxy := &httputil.ReverseProxy{Rewrite: func(request *httputil.ProxyRequest) {
+		request.SetURL(u)
+		request.SetXForwarded()
+		r := request.Out
 
 		scheme := "http://"
-		if r.TLS != nil {
+		if request.In.TLS != nil {
 			scheme = "https://"
 		}
 
-		log().Debugf("Proxy request to: %s%s%s", scheme, r.Host, r.URL.Path)
-	}
+		log().DebugContext(r.Context(), fmt.Sprintf("Proxy request to: %s%s%s", scheme, r.Host, r.URL.Path))
+	}}
 
 	rtr.PathPrefix(routePattern).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc := &responseCapture{w, 0}
 		s := time.Now()
-		log().Tracef("Proxy request started: %v", s)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Proxy request started: %v", s))
 
 		proxy.ServeHTTP(rc, r)
 
 		e := time.Now()
-		log().Tracef("Proxy request completed: %v", e)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Proxy request completed: %v", e))
 
-		log().Infof("PROXY %s %s (%d, %v)", r.Method, r.URL.Path, rc.statusCode, e.Sub(s))
+		log().InfoContext(r.Context(), fmt.Sprintf("PROXY %s %s (%d, %v)", r.Method, r.URL.Path, rc.statusCode, e.Sub(s)))
 	})
 }

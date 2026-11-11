@@ -21,10 +21,12 @@ package render
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"reflect"
@@ -33,6 +35,7 @@ import (
 
 	"github.com/unrolled/render"
 
+	"github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/render/asset"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
@@ -40,6 +43,13 @@ import (
 const (
 	sizeTen       = 10
 	sizeSixtyFour = 64
+)
+
+var (
+	errMissingCatalog     = errors.New("renderer requires a suite and asset catalog")
+	errMissingLayout      = errors.New("missing layout template")
+	errYieldWithoutLayout = errors.New("yield called without layout")
+	errMissingTemplate    = errors.New("template not found")
 )
 
 // Context owns the rendering state for one immutable documentation generation.
@@ -54,7 +64,7 @@ type Context struct {
 // New validates and compiles templates without changing application-global state.
 func New(suite *spec.Suite, catalog *asset.Catalog) (*Context, error) {
 	if suite == nil || catalog == nil {
-		return nil, errors.New("renderer requires a suite and asset catalog")
+		return nil, errMissingCatalog
 	}
 
 	c := &Context{Suite: suite, Assets: catalog, guides: make(map[string]GuideType)}
@@ -78,35 +88,10 @@ func New(suite *spec.Suite, catalog *asset.Catalog) (*Context, error) {
 
 	c.templates = t
 	if c.TemplateLookup("layout") == nil {
-		return nil, errors.New("missing layout template")
+		return nil, errMissingLayout
 	}
 
 	return c, nil
-}
-
-func (c *Context) funcs() template.FuncMap {
-	return template.FuncMap{
-		"map":           Map,
-		"ext":           Extend,
-		"fnn":           FirstNotNil,
-		"arr":           Arr,
-		"lc":            strings.ToLower,
-		"uc":            strings.ToUpper,
-		"join":          strings.Join,
-		"concat":        func(a, b string) string { return a + b },
-		"counter_set":   func(a int) int { return a },
-		"counter_add":   func(a int) int { return a },
-		"mod":           func(a int, m int) int { return a % m },
-		"sub":           func(a, b interface{}) int64 { return toInt64(a) - toInt64(b) },
-		"safehtml":      func(s string) template.HTML { return template.HTML(s) },
-		"haveTemplate":  c.TemplateLookup,
-		"overlay":       func(string, ...interface{}) (template.HTML, error) { return "", nil },
-		"getAssetPaths": func(s string, d ...interface{}) []string { return getAssetPaths(s, d) },
-		"yield":         func() (template.HTML, error) { return "", errors.New("yield called without layout") },
-		"current":       func() string { return "" },
-		"partial":       func(string) (template.HTML, error) { return "", nil },
-		"block":         func(string) (template.HTML, error) { return "", nil },
-	}
 }
 
 // TemplateLookup looks up a template in this generation.
@@ -120,7 +105,7 @@ func (c *Context) TemplateLookup(name string) *template.Template {
 
 // HTML renders with request-local functions, sharing the same counter with nested overlays.
 // Errors are logged explicitly and incomplete template output is never sent.
-func (c *Context) HTML(w io.Writer, status int, name string, binding interface{}, htmlOpt ...render.HTMLOptions) {
+func (c *Context) HTML(w io.Writer, status int, name string, binding any, htmlOpt ...render.HTMLOptions) {
 	if response, ok := w.(http.ResponseWriter); ok {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "text/html; charset=UTF-8")
@@ -128,7 +113,7 @@ func (c *Context) HTML(w io.Writer, status int, name string, binding interface{}
 
 	output, err := c.html(name, binding, htmlOpt...)
 	if err != nil {
-		log().WithError(err).Error("render HTML")
+		log().With(slog.Any("error", err)).Error("render HTML")
 
 		if response, ok := w.(http.ResponseWriter); ok {
 			http.Error(response, "Unable to render documentation", http.StatusInternalServerError)
@@ -144,34 +129,69 @@ func (c *Context) HTML(w io.Writer, status int, name string, binding interface{}
 	}
 
 	if _, err := w.Write(output); err != nil {
-		log().WithError(err).Error("write HTML")
+		log().With(slog.Any("error", err)).Error("write HTML")
 	}
 }
 
-func (c *Context) html(name string, binding interface{}, htmlOpt ...render.HTMLOptions) ([]byte, error) {
+func (c *Context) funcs() template.FuncMap {
+	return template.FuncMap{
+		"map":           Map,
+		"ext":           Extend,
+		"fnn":           FirstNotNil,
+		"arr":           Arr,
+		"lc":            strings.ToLower,
+		"uc":            strings.ToUpper,
+		"join":          strings.Join,
+		"concat":        func(a, b string) string { return a + b },
+		"counter_set":   func(a int) int { return a },
+		"counter_add":   func(a int) int { return a },
+		"mod":           func(a, m int) int { return a % m },
+		"sub":           func(a, b any) int64 { return toInt64(a) - toInt64(b) },
+		"safehtml":      func(s string) template.HTML { return template.HTML(s) },
+		"haveTemplate":  c.TemplateLookup,
+		"overlay":       func(string, ...any) (template.HTML, error) { return "", nil },
+		"getAssetPaths": func(s string, d ...any) []string { return getAssetPaths(s, d) },
+		"yield":         func() (template.HTML, error) { return "", errYieldWithoutLayout },
+		"current":       func() string { return "" },
+		"partial":       func(string) (template.HTML, error) { return "", nil },
+		"block":         func(string) (template.HTML, error) { return "", nil },
+	}
+}
+
+func (c *Context) html(name string, binding any, htmlOpt ...render.HTMLOptions) ([]byte, error) {
 	t, err := c.templates.Clone()
 	if err != nil {
 		return nil, err
 	}
 
 	counter := 0
-	execute := func(name string, data interface{}) (template.HTML, error) {
+	execute := func(name string, data any) (template.HTML, error) {
 		var b bytes.Buffer
+
 		execErr := t.ExecuteTemplate(&b, name, data)
 
 		return template.HTML(b.String()), execErr
 	}
 	funcs := template.FuncMap{
-		"counter_set": func(a int) int { counter = a; return counter },
-		"counter_add": func(a int) int { counter += a; return counter },
-		"overlay":     func(n string, data ...interface{}) (template.HTML, error) { return overlayFunc(t, n, data) },
-		"yield":       func() (template.HTML, error) { return execute(name, binding) },
-		"current":     func() string { return name },
+		"counter_set": func(a int) int {
+			counter = a
+
+			return counter
+		},
+		"counter_add": func(a int) int {
+			counter += a
+
+			return counter
+		},
+		"overlay": func(n string, data ...any) (template.HTML, error) { return overlayFunc(t, n, data) },
+		"yield":   func() (template.HTML, error) { return execute(name, binding) },
+		"current": func() string { return name },
 		"partial": func(partial string) (template.HTML, error) {
 			target := partial + "-" + name
 			if t.Lookup(target) == nil {
 				return "", nil
 			}
+
 			return execute(target, binding)
 		},
 	}
@@ -190,7 +210,7 @@ func (c *Context) html(name string, binding interface{}, htmlOpt ...render.HTMLO
 	}
 
 	if t.Lookup(name) == nil {
-		return nil, fmt.Errorf("template %q not found", name)
+		return nil, fmt.Errorf("%w: %q", errMissingTemplate, name)
 	}
 
 	result, err := execute(target, binding)
@@ -198,18 +218,18 @@ func (c *Context) html(name string, binding interface{}, htmlOpt ...render.HTMLO
 	return []byte(result), err
 }
 
-func overlayFunc(t *template.Template, name string, data []interface{}) (template.HTML, error) {
+func overlayFunc(t *template.Template, name string, data []any) (template.HTML, error) {
 	if len(data) == 0 || data[0] == nil {
 		log().Debug("Data nil")
 
 		return "", nil
 	}
 
-	log().Tracef("Overlay: Looking for overlay %s", name)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Overlay: Looking for overlay %s", name))
 
-	datamap, ok := data[0].(map[string]interface{})
+	datamap, ok := data[0].(map[string]any)
 	if !ok {
-		log().Trace("Overlay: type convert of data[0] to map[string]interface{} failed. Not an expected type.")
+		log().Log(context.Background(), logger.LevelTrace, "Overlay: type convert of data[0] to map[string]interface{} failed. Not an expected type.")
 
 		return "", nil
 	}
@@ -218,10 +238,10 @@ func overlayFunc(t *template.Template, name string, data []interface{}) (templat
 
 	// Look for an overlay file in declaration order.... Highest priority is first.
 	for _, op := range overlayPaths(name, datamap) {
-		log().Tracef("Overlay: Does %q exist?", op)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Overlay: Does %q exist?", op))
 
 		if t.Lookup(op) != nil {
-			log().Tracef("Applying overlay %q", op)
+			log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Applying overlay %q", op))
 
 			if err := t.ExecuteTemplate(&b, op, data[0]); err != nil {
 				return "", err
@@ -234,7 +254,7 @@ func overlayFunc(t *template.Template, name string, data []interface{}) (templat
 	return template.HTML(b.String()), nil
 }
 
-func overlayPaths(name string, datamap map[string]interface{}) []string {
+func overlayPaths(name string, datamap map[string]any) []string {
 	var overlayName []string
 
 	// Use the passed in data structures to determine what type of "page" we are on:
@@ -268,12 +288,12 @@ func overlayPaths(name string, datamap map[string]interface{}) []string {
 	return overlayName
 }
 
-func getAssetPaths(_ string, data []interface{}) []string {
+func getAssetPaths(_ string, data []any) []string {
 	if len(data) == 0 {
 		return nil
 	}
 
-	datamap, _ := data[0].(map[string]interface{})
+	datamap, _ := data[0].(map[string]any)
 
 	var paths []string
 
@@ -336,7 +356,7 @@ func getOverlayStems(overlayAsset string) *overlayStems {
 	}
 }
 
-func getMethodAssetPaths(overlayAsset string, paths *[]string, datamap map[string]interface{}) {
+func getMethodAssetPaths(overlayAsset string, paths *[]string, datamap map[string]any) {
 	method, _ := datamap["Method"].(spec.Method)
 	apiID := method.APIGroup.ID
 
@@ -360,7 +380,7 @@ func getMethodAssetPaths(overlayAsset string, paths *[]string, datamap map[strin
 	)
 }
 
-func getAPIAssetPaths(overlayAsset string, paths *[]string, datamap map[string]interface{}) {
+func getAPIAssetPaths(overlayAsset string, paths *[]string, datamap map[string]any) {
 	apiID := datamap["API"].(spec.APIGroup).ID
 
 	a := getOverlayStems(overlayAsset)
@@ -375,7 +395,7 @@ func getAPIAssetPaths(overlayAsset string, paths *[]string, datamap map[string]i
 	*paths = append(*paths, a.globalStem+"reference/api"+a.asset)
 }
 
-func getResourceAssetPaths(overlayAsset string, paths *[]string, datamap map[string]interface{}) {
+func getResourceAssetPaths(overlayAsset string, paths *[]string, datamap map[string]any) {
 	resID := datamap["Resource"].(*spec.Resource).ID
 	a := getOverlayStems(overlayAsset)
 
@@ -389,12 +409,12 @@ func getResourceAssetPaths(overlayAsset string, paths *[]string, datamap map[str
 	*paths = append(*paths, a.globalStem+"resource/resource"+a.asset)
 }
 
-func getSpecificationListPaths(overlayAsset string, paths *[]string, _ map[string]interface{}) {
+func getSpecificationListPaths(overlayAsset string, paths *[]string, _ map[string]any) {
 	a := getOverlayStems(overlayAsset)
 	*paths = append(*paths, a.globalStem+"reference/specification_list"+a.asset)
 }
 
-func getSpecificationSummaryPaths(overlayAsset string, paths *[]string, datamap map[string]interface{}) {
+func getSpecificationSummaryPaths(overlayAsset string, paths *[]string, datamap map[string]any) {
 	a := getOverlayStems(overlayAsset)
 
 	if specID, ok := datamap["ID"].(string); ok {
@@ -405,7 +425,7 @@ func getSpecificationSummaryPaths(overlayAsset string, paths *[]string, datamap 
 }
 
 // toInt64 converts integer types to 64-bit integers.
-func toInt64(v interface{}) int64 {
+func toInt64(v any) int64 {
 	if str, ok := v.(string); ok {
 		iv, err := strconv.ParseInt(str, sizeTen, sizeSixtyFour)
 		if err != nil {
@@ -420,9 +440,7 @@ func toInt64(v interface{}) int64 {
 	switch val.Kind() {
 	case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Int:
 		return val.Int()
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32:
-		return int64(val.Uint())
-	case reflect.Uint, reflect.Uint64:
+	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint, reflect.Uint64:
 		tv := val.Uint()
 		if tv <= math.MaxInt64 {
 			return int64(tv)

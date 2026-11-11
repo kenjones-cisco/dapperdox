@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,7 @@ func (d *snapshotDiscovery) Shutdown()                   {}
 
 type deletingDiscovery struct {
 	snapshotDiscovery
+
 	reads int
 }
 
@@ -48,7 +50,11 @@ func (d *deletingDiscovery) Snapshot() discover.Snapshot {
 func testUpdater(t *testing.T) (*Updater, *snapshotDiscovery) {
 	t.Helper()
 	config.Restore()
-	log.SetLevel("warn")
+
+	if err := log.SetLevel("warn"); err != nil {
+		t.Fatal(err)
+	}
+
 	viper.Set(config.DefaultAssetsDir, "../assets")
 	viper.Set(config.DiscoveryInitialDelay, "1h")
 
@@ -88,7 +94,7 @@ func refresh(u *Updater, d *snapshotDiscovery, key string, raw []byte) {
 
 func request(h http.Handler, path string) *httptest.ResponseRecorder {
 	response := httptest.NewRecorder()
-	h.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+	h.ServeHTTP(response, httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, http.NoBody))
 
 	return response
 }
@@ -260,6 +266,7 @@ func TestUpdaterConcurrentRequestsAndOldGeneration(t *testing.T) {
 	done := make(chan *httptest.ResponseRecorder, 1)
 
 	go func() { done <- request(u, "/blocked") }()
+
 	<-started
 	refresh(u, d, "common", append(bytes.Clone(raw), ' '))
 	close(release)
@@ -274,18 +281,14 @@ func TestUpdaterConcurrentRequestsAndOldGeneration(t *testing.T) {
 
 	var readers sync.WaitGroup
 	for range 4 {
-		readers.Add(1)
-
-		go func() {
-			defer readers.Done()
-
+		readers.Go(func() {
 			for range 20 {
 				response := request(u, "/common/api.json")
 				if response.Code != http.StatusOK || !json.Valid(response.Body.Bytes()) {
 					t.Error("inconsistent raw spec response")
 				}
 			}
-		}()
+		})
 	}
 
 	for i := range 20 {
@@ -309,9 +312,7 @@ func TestUpdaterManagementIsolationAndClose(t *testing.T) {
 
 	var closes sync.WaitGroup
 	for range 4 {
-		closes.Add(1)
-
-		go func() { defer closes.Done(); u.Close() }()
+		closes.Go(func() { ; u.Close() })
 	}
 
 	closes.Wait()
@@ -381,6 +382,7 @@ func TestConsumingDocsRoutes(t *testing.T) {
 
 	defer u.Close()
 	defer config.Restore()
+
 	refresh(u, d, "common", fixture(t))
 
 	if !u.current.Load().status.Ready {

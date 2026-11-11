@@ -63,9 +63,9 @@ func convertProtocol(name string, proto v1.Protocol) models.Protocol {
 	if proto == v1.ProtocolTCP {
 		prefix := name
 
-		i := strings.Index(name, "-")
-		if i >= 0 {
-			prefix = name[:i]
+		before, _, ok := strings.Cut(name, "-")
+		if ok {
+			prefix = before
 		}
 
 		protocol := models.ConvertCaseInsensitiveStringToProtocol(prefix)

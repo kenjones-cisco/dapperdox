@@ -41,7 +41,7 @@ veryclean: clean
 
 ## builds the dev container
 prepare: tmp/dev_image_id
-tmp/dev_image_id: Dockerfile.dev
+tmp/dev_image_id: Dockerfile.dev scripts/golangci-base.yml
 	@mkdir -p tmp
 	@docker rmi -f ${DEV_IMAGE} > /dev/null 2>&1 || true
 	@echo "## Building dev container"
@@ -102,9 +102,9 @@ format: tmp/vendor-installed
 	fi
 
 ## Run static code analysis (lint).
-check: format
+check: tmp/vendor-installed
 ifeq ($(CI_ENABLED),1)
-	${DOCKERRUN} bash ./scripts/check.sh --ci
+	${DOCKERRUN} bash ./scripts/check.sh --check
 else
 	${DOCKERRUN} bash ./scripts/check.sh
 endif

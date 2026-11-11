@@ -1,11 +1,13 @@
 package render
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/logger"
 	"github.com/kenjones-cisco/dapperdox/navigation"
 	"github.com/kenjones-cisco/dapperdox/spec"
 )
@@ -14,12 +16,12 @@ import (
 type GuideType []*navigation.Node
 
 // Vars is a map of variables.
-type Vars map[string]interface{}
+type Vars map[string]any
 
 // DefaultVars adds the default vars (config, specs, others....) to the data map.
 func (c *Context) DefaultVars(req *http.Request, s *spec.APISpecification, m Vars) map[string]any {
 	if m == nil {
-		log().Trace("creating new template data map")
+		log().Log(context.Background(), logger.LevelTrace, "creating new template data map")
 
 		m = make(map[string]any)
 	}

@@ -28,10 +28,52 @@ See [downloads](http://dapperdox.io/download/downloads) for further information.
 
 ### Build from source
 
-First build DapperDox (this assumes that you have your golang environment configured correctly):
+Use Go **1.26.11** (the MCMP Go 1.26 line). The development image pins
+golangci-lint **v2.12.2**, matching the MCMP green image.
+
+First build DapperDox:
 ```bash
-go get && go build
+go mod download
+go build .
 ```
+
+For formatting and static analysis, use `make check`, or install the pinned
+golangci-lint version and Mike Farah's `yq` v4 and run:
+
+```bash
+bash scripts/check.sh --fix
+bash scripts/check.sh --check
+go test -race ./...
+```
+
+`--check` (also accepted as `--ci`) does not modify source files and fails if
+formatting or lint changes are required. The default and `--fix` apply fixes.
+Unlike the shared MCMP script, no submodule-cleaning script is sourced: this
+repository has no `cicd-common` submodule.
+
+The script merges the image's `/usr/local/etc/golangci.yml` with
+`.golangci.yml`. Outside the image it uses the tracked snapshot
+[`scripts/golangci-base.yml`](scripts/golangci-base.yml), from
+[MCMP images revision `4cc5b99`](https://github.com/cisco-it-mcmp/images/blob/4cc5b997d84887ccb24cc123b306b824c10d7074/golang-dev/green/golangci.yml).
+Set `GOLANGCI_BASE_CONFIG` to validate against another baseline explicitly.
+Repository overrides only add local import aliases and the main-program output
+exception; the former complexity and unused-assignment suppressions are removed.
+
+Kubernetes modules (`api`, `apimachinery`, and `client-go`) are kept together at
+**v0.33.13** for Kubernetes **v1.33.x**, rather than following newer Kubernetes
+minor releases. Other dependencies use their latest compatible releases.
+`kube-openapi` and `gnostic-models` remain on the compatible Kubernetes v0.33
+dependency versions: newer `kube-openapi` requires Go 1.27, while
+`gnostic-models` v0.7 changes YAML types incompatibly with this version.
+
+Application logging uses standard-library `log/slog` with structured text on
+stderr, package fields and fixed-width timestamps. Supported `--log-level`
+values are `trace`, `debug`, `info`, `warn`/`warning`, and `error`; invalid values
+fail startup. Standard-library diagnostics remain at debug level.
+
+The built-in API proxy uses `ReverseProxy.Rewrite`: target host, path, and query
+are preserved, while incoming forwarding headers are replaced with values
+derived from the actual client request.
 
 ### Running DapperDox
 
@@ -145,5 +187,3 @@ as part of a bigger project. His commit history was lost when DapperDox was extr
 project, but its core retains his valuable work.
 
 [David Mort](https://github.com/davidmort) for painstaking testing, and bug fixing.
-
-

@@ -21,28 +21,41 @@ package spec
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"maps"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
-	"github.com/go-openapi/swag"
-	wraperrors "github.com/pkg/errors"
+	"github.com/go-openapi/swag/loading"
 	"github.com/serenize/snaker"
 	"github.com/spf13/viper"
 
 	"github.com/kenjones-cisco/dapperdox/config"
 	"github.com/kenjones-cisco/dapperdox/discover"
 	"github.com/kenjones-cisco/dapperdox/formatter"
+	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
 const (
-	arrayType = "array"
+	collectionCSV  = "csv"
+	parameterPath  = "path"
+	arrayType      = "array"
+	objectType     = "object"
+	mapType        = "map"
+	sortMethod     = "method"
+	sortOperation  = "operation"
+	sortNavigation = "navigation"
+	sortSummary    = "summary"
 
 	excludeOpExt     = "x-excludeFromOperations"
 	navMethodNameExt = "x-navigateMethodsByName"
@@ -54,6 +67,8 @@ const (
 	visibilityExt    = "x-visibility"
 )
 
+var errMissingDiscovery = errors.New("no discovery provided to fetch specs")
+
 // all defined ResourceOrigin.
 const (
 	RequestBody ResourceOrigin = iota
@@ -63,19 +78,19 @@ const (
 var kababExclude = regexp.MustCompile(`[^\w\s]`) // Any non word or space character
 
 var collectionTable = map[string]string{
-	"csv":   "comma separated",
-	"ssv":   "space separated",
-	"tsv":   "tab separated",
-	"pipes": "pipe separated",
-	"multi": "multiple occurrences",
+	collectionCSV: "comma separated",
+	"ssv":         "space separated",
+	"tsv":         "tab separated",
+	"pipes":       "pipe separated",
+	"multi":       "multiple occurrences",
 }
 
 var sortTypes = map[string]bool{
-	"path":       true,
-	"method":     true,
-	"operation":  true,
-	"navigation": true,
-	"summary":    true,
+	parameterPath:  true,
+	sortMethod:     true,
+	sortOperation:  true,
+	sortNavigation: true,
+	sortSummary:    true,
 }
 
 // APISuite holds multiple apis held by name.
@@ -138,6 +153,7 @@ type OAuth2Scheme struct {
 // SecurityScheme holds the security scheme from a parsed api.
 type SecurityScheme struct {
 	OAuth2Scheme
+
 	Type          string
 	Description   string
 	ParamName     string
@@ -285,7 +301,7 @@ func LoadSpecifications(d discover.DiscoveryManager) (bool, error) {
 		asg[specification.GroupBy] = append(asg[specification.GroupBy], specification)
 	}
 
-	log().Infof("loaded [%d] specifications to API spec suite maps", len(as))
+	log().Info(fmt.Sprintf("loaded [%d] specifications to API spec suite maps", len(as)))
 
 	if len(as) > 0 {
 		APISuite = as
@@ -299,7 +315,7 @@ func LoadSpecifications(d discover.DiscoveryManager) (bool, error) {
 
 func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document, error) {
 	if d == nil {
-		return nil, wraperrors.New("no discovery provided to fetch specs")
+		return nil, errMissingDiscovery
 	}
 
 	docs := make(map[string]*loads.Document)
@@ -317,7 +333,7 @@ func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document
 			return nil, err
 		}
 
-		log().Debugf("  registering spec[%s]", fmt.Sprintf("%s:%s", k, document.Spec().Info.Version))
+		log().Debug(fmt.Sprintf("  registering spec[%s]", fmt.Sprintf("%s:%s", k, document.Spec().Info.Version)))
 		docs[fmt.Sprintf("/%s/api.json", k)] = document
 	}
 
@@ -325,12 +341,12 @@ func getDocsByDiscovery(d discover.DiscoveryManager) (map[string]*loads.Document
 }
 
 func getDocsByDir() (map[string]*loads.Document, error) {
-	log().Infof("configured spec filenames: %v", viper.GetStringSlice(config.SpecFilename))
+	log().Info(fmt.Sprintf("configured spec filenames: %v", viper.GetStringSlice(config.SpecFilename)))
 
 	docs := make(map[string]*loads.Document)
 
 	for _, specLocation := range viper.GetStringSlice(config.SpecFilename) {
-		log().Infof("specLocation: %s", specLocation)
+		log().Info(fmt.Sprintf("specLocation: %s", specLocation))
 
 		document, err := loadSpec(normalizeSpecLocation(specLocation))
 		if err != nil {
@@ -353,10 +369,8 @@ func (c *APISpecification) load(specLocation string, document *loads.Document) {
 	c.URL = specLocation
 
 	basePath := apispec.BasePath
-	basePathLen := len(basePath)
-	// Ignore basepath if it is a single '/'
-	if basePathLen == 1 && basePath[0] == '/' {
-		basePathLen = 0
+	if basePath == "/" {
+		basePath = ""
 	}
 
 	scheme := "http"
@@ -381,7 +395,7 @@ func (c *APISpecification) load(specLocation string, document *loads.Document) {
 		panic(parseError("specification requires info.title"))
 	}
 
-	log().Tracef("Parse OpenAPI specification %q", c.APIInfo.Title)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Parse OpenAPI specification %q", c.APIInfo.Title))
 
 	c.ID = titleToKebab(c.APIInfo.Title)
 
@@ -399,123 +413,98 @@ func (c *APISpecification) load(specLocation string, document *loads.Document) {
 		methodNavByName = byname
 	}
 
-	var methodSortBy []string
+	methodSortBy := methodSortKeys(apispec.Extensions)
 
-	if sortByList, ok := apispec.Extensions[sortMethodsByExt].([]interface{}); ok {
-		for _, sortBy := range sortByList {
-			keyname, _ := sortBy.(string)
-			if _, ok := sortTypes[keyname]; !ok {
-				log().Errorf("Error: Invalid x-sortBy value %s", keyname)
-			} else {
-				methodSortBy = append(methodSortBy, keyname)
-			}
-		}
+	prototype := APIGroup{
+		URL: u, Info: &c.APIInfo, MethodNavigationByName: methodNavByName,
+		MethodSortBy: methodSortBy, Consumes: apispec.Consumes, Produces: apispec.Produces,
 	}
-
-	// Use the top level TAGS to order the API resources/endpoints
-	// If Tags: [] is not defined, or empty, then no filtering or ordering takes place,
-	// and all API paths will be documented..
 	for _, tag := range getTags(apispec) {
-		log().Trace("  In tag loop...")
-		// Tag matching may not be as expected if multiple paths have the same TAG (which is technically permitted)
-		var (
-			ok  bool
-			api *APIGroup
-		)
-
-		groupingByTag := false
-		if tag.Name != "" {
-			groupingByTag = true
-		}
-
-		// Will only populate if Tagging used in spec. processMethod overrides if needed.
-		name := tag.Description
-		if name == "" {
-			name = tag.Name
-		}
-
-		log().Tracef("    - %s", name)
-
-		// If we're grouping by TAGs, then build the API at the tag level
-		if groupingByTag {
-			api = &APIGroup{
-				ID:                     titleToKebab(name),
-				Name:                   name,
-				URL:                    u,
-				Info:                   &c.APIInfo,
-				MethodNavigationByName: methodNavByName,
-				MethodSortBy:           methodSortBy,
-				Consumes:               apispec.Consumes,
-				Produces:               apispec.Produces,
-			}
-		}
-
-		for path, pathItem := range document.Analyzer.AllPaths() {
-			log().Trace("    In path loop...")
-
-			if isPrivate(pathItem.Extensions) {
-				log().Debugf("%s all operations private", basePath+path)
-
-				continue
-			}
-
-			if basePathLen > 0 {
-				path = basePath + path
-			}
-
-			// If not grouping by tag, then build the API at the path level
-			if !groupingByTag {
-				api = &APIGroup{
-					ID:                     titleToKebab(name),
-					Name:                   name,
-					URL:                    u,
-					Info:                   &c.APIInfo,
-					MethodNavigationByName: methodNavByName,
-					MethodSortBy:           methodSortBy,
-					Consumes:               apispec.Consumes,
-					Produces:               apispec.Produces,
-				}
-			}
-
-			var ver string
-			if ver, ok = pathItem.Extensions[versionExt].(string); !ok {
-				ver = "latest"
-			}
-
-			api.CurrentVersion = ver
-
-			c.getMethods(tag, api, &api.Methods, &pathItem, path, ver) // Current version
-
-			// If API was populated (will not be if tags do not match), add to set
-			if !groupingByTag && len(api.Methods) > 0 {
-				log().Tracef("    + Adding %s", name)
-
-				sort.Sort(SortMethods(api.Methods))
-				c.APIs = append(c.APIs, *api) // All APIs (versioned within)
-			}
-		}
-
-		if groupingByTag && len(api.Methods) > 0 {
-			log().Tracef("    + Adding %s", name)
-
-			sort.Sort(SortMethods(api.Methods))
-			c.APIs = append(c.APIs, *api) // All APIs (versioned within)
-		}
+		c.loadTag(document, tag, basePath, prototype)
 	}
 
 	// Build a API map, grouping by version
-	for _, api := range c.APIs {
+	for i := range c.APIs {
+		api := &c.APIs[i]
 		for v := range api.Versions {
 			if c.APIVersions == nil {
 				c.APIVersions = make(map[string]APISet)
 			}
 			// Create copy of API and set Methods array to be correct for the version we are building
-			napi := api
+			napi := *api
 			napi.Methods = napi.Versions[v]
 			napi.Versions = nil
 			c.APIVersions[v] = append(c.APIVersions[v], napi) // Group APIs by version
 		}
 	}
+}
+
+func methodSortKeys(extensions spec.Extensions) []string {
+	var keys []string
+
+	values, _ := extensions[sortMethodsByExt].([]any)
+	for _, value := range values {
+		key, _ := value.(string)
+		if _, ok := sortTypes[key]; !ok {
+			log().Error("invalid x-sortBy value", slog.String("key", key))
+		} else {
+			keys = append(keys, key)
+		}
+	}
+
+	return keys
+}
+
+func (c *APISpecification) loadTag(document *loads.Document, tag spec.Tag, basePath string, prototype APIGroup) {
+	name := tag.Description
+	if name == "" {
+		name = tag.Name
+	}
+
+	prototype.ID, prototype.Name = titleToKebab(name), name
+	api := new(APIGroup)
+	*api = prototype
+	groupingByTag := tag.Name != ""
+	paths := document.Analyzer.AllPaths()
+
+	for path := range paths {
+		pathItem := paths[path]
+		if isPrivate(pathItem.Extensions) {
+			continue
+		}
+
+		path = basePath + path
+
+		if !groupingByTag {
+			api = new(APIGroup)
+			*api = prototype
+		}
+
+		ver, ok := pathItem.Extensions[versionExt].(string)
+		if !ok {
+			ver = "latest"
+		}
+
+		api.CurrentVersion = ver
+		c.getMethods(tag, api, &api.Methods, &pathItem, path, ver)
+
+		if !groupingByTag {
+			c.appendAPI(api)
+		}
+	}
+
+	if groupingByTag {
+		c.appendAPI(api)
+	}
+}
+
+func (c *APISpecification) appendAPI(api *APIGroup) {
+	if len(api.Methods) == 0 {
+		return
+	}
+
+	sort.Sort(SortMethods(api.Methods))
+	c.APIs = append(c.APIs, *api)
 }
 
 func (c *APISpecification) getMethods(tag spec.Tag, api *APIGroup, methods *[]Method, pi *spec.PathItem, path, version string) {
@@ -530,24 +519,24 @@ func (c *APISpecification) getMethods(tag spec.Tag, api *APIGroup, methods *[]Me
 
 func (c *APISpecification) getMethod(tag spec.Tag, api *APIGroup, methods *[]Method, version string, pathitem *spec.PathItem, operation *spec.Operation, path, methodname string) {
 	if operation == nil {
-		log().Tracef("Skipping %s %s - Operation is nil.", path, methodname)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Skipping %s %s - Operation is nil.", path, methodname))
 
 		return
 	}
 
 	if isPrivate(operation.Extensions) {
-		log().Debugf("Skipping %s %s - Operation is private", path, methodname)
+		log().Debug(fmt.Sprintf("Skipping %s %s - Operation is private", path, methodname))
 
 		return
 	}
 
-	log().Tracef("  Operation tag length: %d", len(operation.Tags))
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("  Operation tag length: %d", len(operation.Tags)))
 
 	// Filter and sort by matching current top-level tag with the operation tags.
 	// If Tagging is not used by spec, then process each operation without filtering.
 	if len(operation.Tags) == 0 {
 		if tag.Name != "" {
-			log().Tracef("Skipping %s - Operation does not contain a tag member, and tagging is in use.", operation.Summary)
+			log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Skipping %s - Operation does not contain a tag member, and tagging is in use.", operation.Summary))
 
 			return
 		}
@@ -555,10 +544,10 @@ func (c *APISpecification) getMethod(tag spec.Tag, api *APIGroup, methods *[]Met
 		method := c.processMethod(api, pathitem, operation, path, methodname, version)
 		*methods = append(*methods, *method)
 	} else {
-		log().Trace("    > Check tags")
+		log().Log(context.Background(), logger.LevelTrace, "    > Check tags")
 
 		for _, t := range operation.Tags {
-			log().Tracef("      - Compare tag %q with %q", tag.Name, t)
+			log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("      - Compare tag %q with %q", tag.Name, t))
 
 			if tag.Name == "" || t == tag.Name {
 				method := c.processMethod(api, pathitem, operation, path, methodname, version)
@@ -598,9 +587,7 @@ func (c *APISpecification) getSecurityDefinitions(s *spec.Swagger) {
 			def.TokenURL = d.TokenURL                 // Only for implicit, accesscode or password flow
 			def.Scopes = make(map[string]string)
 
-			for s, n := range d.Scopes {
-				def.Scopes[s] = n
-			}
+			maps.Copy(def.Scopes, d.Scopes)
 		}
 
 		c.SecurityDefinitions[n] = *def
@@ -613,29 +600,7 @@ func (c *APISpecification) getDefaultSecurity(s *spec.Swagger) {
 }
 
 func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem, o *spec.Operation, path, methodname, version string) *Method {
-	var (
-		opname    string
-		gotOpname bool
-	)
-
-	operationName := methodname
-	if opname, gotOpname = o.Extensions[opNameExt].(string); gotOpname {
-		operationName = opname
-	}
-
-	// Construct an ID for the Method. Choose from operation ID, x-operationName, summary and lastly method name.
-	id := o.ID // OperationID
-	if id == "" {
-		// No ID, use x-operationName, if we have it...
-		if gotOpname {
-			id = titleToKebab(opname)
-		} else {
-			id = titleToKebab(o.Summary) // No opname, use summary
-			if id == "" {
-				id = methodname // Last chance. Method name.
-			}
-		}
-	}
+	id, operationName := methodIdentity(o, methodname)
 
 	navigationName := operationName
 	if api.MethodNavigationByName {
@@ -657,6 +622,40 @@ func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem,
 		SortKey:        sortkey,
 	}
 
+	c.populateMethod(api, pathItem, o, method, version)
+
+	return method
+}
+
+func methodIdentity(o *spec.Operation, methodname string) (id, operationName string) {
+	var (
+		opname    string
+		gotOpname bool
+	)
+
+	operationName = methodname
+	if opname, gotOpname = o.Extensions[opNameExt].(string); gotOpname {
+		operationName = opname
+	}
+
+	// Construct an ID for the Method. Choose from operation ID, x-operationName, summary and lastly method name.
+	id = o.ID // OperationID
+	if id == "" {
+		// No ID, use x-operationName, if we have it...
+		if gotOpname {
+			id = titleToKebab(opname)
+		} else {
+			id = titleToKebab(o.Summary) // No opname, use summary
+			if id == "" {
+				id = methodname // Last chance. Method name.
+			}
+		}
+	}
+
+	return id, operationName
+}
+
+func (c *APISpecification) populateMethod(api *APIGroup, pathItem *spec.PathItem, o *spec.Operation, method *Method, version string) {
 	if len(o.Consumes) > 0 {
 		method.Consumes = o.Consumes
 	} else {
@@ -682,7 +681,7 @@ func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem,
 	if api.Name == "" {
 		name := o.Summary
 		if name == "" {
-			panic(parseError(fmt.Sprintf("operation %q requires operationId or summary", id)))
+			panic(parseError(fmt.Sprintf("operation %q requires operationId or summary", method.ID)))
 		}
 
 		api.Name = name
@@ -699,14 +698,13 @@ func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem,
 
 	// Compile resources from response declaration
 	if o.Responses == nil {
-		panic(parseError(fmt.Sprintf("operation %s %s requires responses", methodname, path)))
+		panic(parseError(fmt.Sprintf("operation %s %s requires responses", method.Method, method.Path)))
 	}
 	// FIXME - Dies if there are no responses...
 	for status, response := range o.Responses.StatusCodeResponses {
-		log().Tracef("Response for status %d", status)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Response for status %d", status))
 
-		// Discover if the resource is already declared, and pick it up
-		// if it is (keyed on version number)
+		// Discover if the resource is already declared, keyed on version number.
 		if response.Schema != nil {
 			if _, ok := c.ResourceList[version]; !ok {
 				c.ResourceList[version] = make(map[string]*Resource)
@@ -728,32 +726,32 @@ func (c *APISpecification) processMethod(api *APIGroup, pathItem *spec.PathItem,
 	if !c.processSecurity(o.Security, method.Security) {
 		method.Security = c.DefaultSecurity
 	}
-
-	return method
 }
 
 func (c *APISpecification) processParameters(params []spec.Parameter, method *Method, version string) {
-	for _, param := range params {
+	for i := range params {
+		param := &params[i]
 		p := Parameter{
 			Name:        param.Name,
 			In:          param.In,
 			Description: string(formatter.Markdown([]byte(param.Description))),
 			Required:    param.Required,
 		}
-		p.setType(param)
-		p.setEnums(param)
+		p.setType(*param)
+		p.setEnums(*param)
 
 		switch strings.ToLower(param.In) {
 		case "formdata":
 			method.FormParams = append(method.FormParams, p)
-		case "path":
+		case parameterPath:
 			method.PathParams = append(method.PathParams, p)
 		case "body":
 			if param.Schema == nil {
 				panic(parseError(fmt.Sprintf("body parameter %q requires schema", param.Name)))
 			}
 
-			var body map[string]interface{}
+			var body map[string]any
+
 			p.Resource, body, p.IsArray = c.resourceFromSchema(param.Schema, method, nil, true)
 			p.Resource.Schema = jsonResourceToString(body, p.IsArray)
 			p.Resource.origin = RequestBody
@@ -775,7 +773,7 @@ func (c *APISpecification) buildResponse(resp *spec.Response, method *Method, ve
 			vres        *Resource
 			r           *Resource
 			isArray     bool
-			exampleJSON map[string]interface{}
+			exampleJSON map[string]any
 		)
 
 		if resp.Schema != nil {
@@ -802,7 +800,7 @@ func (c *APISpecification) buildResponse(resp *spec.Response, method *Method, ve
 }
 
 func (c *APISpecification) crossLinkMethodAndResource(resource *Resource, method *Method, version string) *Resource {
-	log().Tracef("++ Resource version %s  ID %s", version, resource.ID)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("++ Resource version %s  ID %s", version, resource.ID))
 
 	if _, ok := c.ResourceList[version]; !ok {
 		c.ResourceList[version] = make(map[string]*Resource)
@@ -815,7 +813,7 @@ func (c *APISpecification) crossLinkMethodAndResource(resource *Resource, method
 	)
 
 	if vres, resFound = c.ResourceList[version][resource.ID]; !resFound {
-		log().Trace("   - Creating new resource")
+		log().Log(context.Background(), logger.LevelTrace, "   - Creating new resource")
 
 		vres = resource
 	}
@@ -830,18 +828,18 @@ func (c *APISpecification) crossLinkMethodAndResource(resource *Resource, method
 	// Store resource in resource-list of the specification, considering precident.
 	if resource.origin == RequestBody {
 		// Resource is a Request Body - the lowest precident
-		log().Trace("   - Resource origin is a request body")
+		log().Log(context.Background(), logger.LevelTrace, "   - Resource origin is a request body")
 
 		// If this is the first time the resource has been seen, it's okay to store this in
 		// the global list. A request body resource is a filtered (excludes read-only) resource,
 		// and has a lower precident than a response resource.
 		if !resFound {
-			log().Trace("     - Not seen before, so storing in global list")
+			log().Log(context.Background(), logger.LevelTrace, "     - Not seen before, so storing in global list")
 
 			c.ResourceList[version][resource.ID] = vres
 		}
 	} else {
-		log().Trace("   - Resource origin is a response, so storing in global list")
+		log().Log(context.Background(), logger.LevelTrace, "   - Resource origin is a response, so storing in global list")
 
 		// This is a response resource (which has the highest precident). If an existing
 		// request-body resource was found in the cache, then it is replaced by the
@@ -872,14 +870,7 @@ func (c *APISpecification) processSecurity(s []map[string][]string, security map
 					Scopes: make(map[string]string),
 				}
 
-				if scheme.IsOAuth2 {
-					// Populate method specific scopes by cross referencing SecurityDefinitions
-					for _, scope := range scopes {
-						if scopeDesc, ok := scheme.Scopes[scope]; ok {
-							security[scheme.Type].Scopes[scope] = scopeDesc
-						}
-					}
-				}
+				populateSecurityScopes(scheme, scopes, security[scheme.Type].Scopes)
 			}
 		}
 	}
@@ -887,15 +878,25 @@ func (c *APISpecification) processSecurity(s []map[string][]string, security map
 	return count != 0
 }
 
-func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fqNS []string, isRequestResource bool) (*Resource, map[string]interface{}, bool) {
+func populateSecurityScopes(scheme SecurityScheme, scopes []string, result map[string]string) {
+	if !scheme.IsOAuth2 {
+		return
+	}
+
+	for _, scope := range scopes {
+		if description, ok := scheme.Scopes[scope]; ok {
+			result[scope] = description
+		}
+	}
+}
+
+func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fqNS []string, isRequestResource bool) (*Resource, map[string]any, bool) {
 	if s == nil {
 		return nil, nil, false
 	}
 
-	stype := checkPropertyType(s)
-	log().Tracef("resourceFromSchema: Schema type: %s", stype)
-	log().Tracef("FQNS: %s", fqNS)
-	log().Trace("CHECK schema type and items")
+	log().Log(context.Background(), logger.LevelTrace, "parse resource schema",
+		slog.String("type", checkPropertyType(s)), slog.Any("namespace", fqNS))
 
 	// It is possible for a response to be an array of
 	//     objects, and it possible to declare this in several ways:
@@ -916,44 +917,8 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 	//  two cases is to keep the top level "type" in the second case, and apply it to items.schema.Type,
 	//  reseting our schema variable to items.schema.
 
-	if len(s.Type) == 0 {
-		s.Type = append(s.Type, "object")
-	}
-
 	originalS := s
-
-	if s.Items != nil {
-		stringorarray := s.Type
-
-		// Jump to nearest schema for items, depending on how it was declared
-		if s.Items.Schema != nil { // API Spec - items: { properties: {} }
-			s = s.Items.Schema
-			log().Tracef("got s.Items.Schema for %s", s.Title)
-		} else if len(s.Items.Schemas) > 0 { // API Spec - items: { $ref: "" }
-			s = &s.Items.Schemas[0]
-			log().Tracef("got s.Items.Schemas[0] for %s", s.Title)
-		} else {
-			panic(parseError("array items require a schema"))
-		}
-
-		if len(s.Type) == 0 {
-			log().Tracef("Got array of objects or object. Name %s", s.Title)
-			s.Type = stringorarray // Put back original type
-		} else if s.Type.Contains(arrayType) {
-			log().Tracef("Got array for %s", s.Title)
-			s.Type = stringorarray // Put back original type
-		} else if stringorarray.Contains(arrayType) && len(s.Properties) == 0 {
-			// if we get here then we can assume the type is supposed to be an array of primitives
-			// Store the actual primitive type in the second element of the Type array.
-			s.Type = spec.StringOrArray([]string{arrayType, s.Type[0]})
-		} else {
-			s.Type = stringorarray // Put back original type
-
-			log().Trace("putting s.Type back")
-		}
-
-		log().Tracef("REMAP SCHEMA (Type is now %s)", s.Type)
-	}
+	s = remapResourceSchema(s)
 
 	if s.Format != "" {
 		s.Type[len(s.Type)-1] = s.Format
@@ -968,7 +933,7 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 	// Ignore ID (from title element) for all but child-objects...
 	// This prevents the title-derived ID being added onto the end of the FQNS.property as
 	// FQNS.property.ID, if title is given for the property in the spec.
-	if len(fqNS) > 0 && !s.Type.Contains("object") {
+	if len(fqNS) > 0 && !s.Type.Contains(objectType) {
 		id = ""
 	}
 
@@ -992,34 +957,21 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 		myFQNS = append([]string{}, myFQNS[0:len(myFQNS)-1]...)
 		chopped = true
 
-		log().Tracef("Chopped %s from myFQNS leaving %s", id, myFQNS)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Chopped %s from myFQNS leaving %s", id, myFQNS))
 	}
 
 	resourceFQNS := myFQNS
 	// If we are dealing with an object, then adjust the resource FQNS and id
 	// so that the last element of the FQNS is chopped off and used as the ID
-	if !chopped && s.Type.Contains("object") {
-		if len(resourceFQNS) > 0 {
-			id = resourceFQNS[len(resourceFQNS)-1]
-			resourceFQNS = resourceFQNS[:len(resourceFQNS)-1]
+	if !chopped && s.Type.Contains(objectType) && len(resourceFQNS) > 0 {
+		id = resourceFQNS[len(resourceFQNS)-1]
+		resourceFQNS = resourceFQNS[:len(resourceFQNS)-1]
 
-			log().Tracef("Got an object, so slicing %s from resourceFQNS leaving %s", id, myFQNS)
-		}
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Got an object, so slicing %s from resourceFQNS leaving %s", id, myFQNS))
 	}
 
 	// If there is no description... the case where we have an array of objects. See issue/11
-	var description string
-	if originalS.Description != "" {
-		description = string(formatter.Markdown([]byte(originalS.Description)))
-	} else {
-		description = originalS.Title
-	}
-
-	log().Tracef("Create resource %s [%s]", id, s.Title)
-
-	if isArray {
-		log().Trace("- Is Arrays")
-	}
+	description := resourceDescription(originalS)
 
 	r := &Resource{
 		ID:          id,
@@ -1030,10 +982,61 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 		FQNS:        resourceFQNS,
 	}
 
+	populateResourceMetadata(r, s, originalS, isRequestResource)
+
+	required := make(map[string]bool)
+	jsonRepresentation := make(map[string]any)
+
+	c.compileproperties(s, r, method, id, required, jsonRepresentation, myFQNS, chopped, isRequestResource)
+
+	for allof := range s.AllOf {
+		c.compileproperties(&s.AllOf[allof], r, method, id, required, jsonRepresentation, myFQNS, chopped, isRequestResource)
+	}
+
+	return r, jsonRepresentation, isArray
+}
+
+func resourceDescription(s *spec.Schema) string {
+	if s.Description != "" {
+		return string(formatter.Markdown([]byte(s.Description)))
+	}
+
+	return s.Title
+}
+
+func remapResourceSchema(s *spec.Schema) *spec.Schema {
+	if len(s.Type) == 0 {
+		s.Type = append(s.Type, objectType)
+	}
+
+	if s.Items == nil {
+		return s
+	}
+
+	originalType := s.Type
+	switch {
+	case s.Items.Schema != nil:
+		s = s.Items.Schema
+	case len(s.Items.Schemas) > 0:
+		s = &s.Items.Schemas[0]
+	default:
+		panic(parseError("array items require a schema"))
+	}
+
+	if len(s.Type) > 0 && !s.Type.Contains(arrayType) && originalType.Contains(arrayType) && len(s.Properties) == 0 {
+		s.Type = spec.StringOrArray{arrayType, s.Type[0]}
+	} else {
+		s.Type = originalType
+	}
+
+	return s
+}
+
+func populateResourceMetadata(r *Resource, s, original *spec.Schema, isRequestResource bool) {
 	if s.Example != nil {
 		example, err := jsonMarshalIndent(&s.Example)
 		if err != nil {
-			log().Errorf("Error encoding example json: %s", err)
+			log().Error(fmt.Sprintf("Error encoding example json: %s", err))
 		}
 
 		r.Example = string(example)
@@ -1045,9 +1048,9 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 		}
 	}
 
-	r.ReadOnly = originalS.ReadOnly
+	r.ReadOnly = original.ReadOnly
 
-	if ops, ok := originalS.Extensions[excludeOpExt].([]interface{}); ok && isRequestResource {
+	if ops, ok := original.Extensions[excludeOpExt].([]any); ok && isRequestResource {
 		// Mark resource property as being excluded from operations with this name.
 		// This filtering only takes effect in a request body, just like readOnly, so when isRequestResource is true
 		for _, op := range ops {
@@ -1056,26 +1059,12 @@ func (c *APISpecification) resourceFromSchema(s *spec.Schema, method *Method, fq
 			}
 		}
 	}
-
-	required := make(map[string]bool)
-	jsonRepresentation := make(map[string]interface{})
-
-	log().Trace("Call compileproperties...")
-	c.compileproperties(s, r, method, id, required, jsonRepresentation, myFQNS, chopped, isRequestResource)
-
-	for allof := range s.AllOf {
-		c.compileproperties(&s.AllOf[allof], r, method, id, required, jsonRepresentation, myFQNS, chopped, isRequestResource)
-	}
-
-	log().Trace("resourceFromSchema done")
-
-	return r, jsonRepresentation, isArray
 }
 
 // Takes a Schema object and adds properties to the Resource object.
 // It uses the 'required' map to set when properties are required and builds a JSON
 // representation of the resource.
-func (c *APISpecification) compileproperties(s *spec.Schema, r *Resource, method *Method, id string, required map[string]bool, jsonRep map[string]interface{}, myFQNS []string,
+func (c *APISpecification) compileproperties(s *spec.Schema, r *Resource, method *Method, id string, required map[string]bool, jsonRep map[string]any, myFQNS []string,
 	chopped, isRequestResource bool,
 ) {
 	// First, grab the required members
@@ -1083,7 +1072,8 @@ func (c *APISpecification) compileproperties(s *spec.Schema, r *Resource, method
 		required[n] = true
 	}
 
-	for name, property := range s.Properties {
+	for name := range s.Properties {
+		property := s.Properties[name]
 		c.processProperty(&property, name, r, method, id, required, jsonRep, myFQNS, chopped, isRequestResource)
 	}
 
@@ -1094,41 +1084,37 @@ func (c *APISpecification) compileproperties(s *spec.Schema, r *Resource, method
 		ap := s.AdditionalProperties.Schema
 
 		if len(ap.Type) == 0 {
-			ap.Type = spec.StringOrArray([]string{"map", "object"})
+			ap.Type = spec.StringOrArray([]string{mapType, objectType})
 		} else {
-			ap.Type = spec.StringOrArray([]string{"map", ap.Type[0]}) // massage type so that it is a map of 'type'
+			ap.Type = spec.StringOrArray([]string{mapType, ap.Type[0]}) // massage type so that it is a map of 'type'
 		}
 
 		c.processProperty(ap, name, r, method, id, required, jsonRep, myFQNS, chopped, isRequestResource)
 	}
 }
 
-func (c *APISpecification) processProperty(s *spec.Schema, name string, r *Resource, method *Method, id string, required map[string]bool, jsonRep map[string]interface{}, myFQNS []string,
+func (c *APISpecification) processProperty(s *spec.Schema, name string, r *Resource, method *Method, id string, required map[string]bool, jsonRep map[string]any, myFQNS []string,
 	chopped, isRequestResource bool,
 ) {
 	newFQNS := prepareNamespace(myFQNS, id, name, chopped)
 
 	var (
-		jsonResource map[string]interface{}
+		jsonResource map[string]any
 		resource     *Resource
 	)
 
-	log().Tracef("A call resourceFromSchema for property %s", name)
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("A call resourceFromSchema for property %s", name))
 
 	resource, jsonResource, _ = c.resourceFromSchema(s, method, newFQNS, isRequestResource)
 
 	skip := isRequestResource && resource.ReadOnly
 	if !skip && resource.ExcludeFromOperations != nil {
-		log().Tracef("Exclude [%s] in operation [%s] if in list: %s", name, method.OperationName, resource.ExcludeFromOperations)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Exclude [%s] in operation [%s] if in list: %s", name, method.OperationName, resource.ExcludeFromOperations))
 
-		for _, opname := range resource.ExcludeFromOperations {
-			if opname == method.OperationName {
-				log().Tracef("[%s] is excluded", name)
+		if slices.Contains(resource.ExcludeFromOperations, method.OperationName) {
+			log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("[%s] is excluded", name))
 
-				skip = true
-
-				break
-			}
+			skip = true
 		}
 	}
 
@@ -1143,75 +1129,48 @@ func (c *APISpecification) processProperty(s *spec.Schema, name string, r *Resou
 		r.Properties[name].Required = true
 	}
 
-	log().Tracef("resource property %s type: %s", name, r.Properties[name].Type[0])
+	log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("resource property %s type: %s", name, r.Properties[name].Type[0]))
 
-	if !strings.EqualFold(r.Properties[name].Type[0], "object") {
-		// Arrays of objects need to be handled as a special case
-		if strings.EqualFold(r.Properties[name].Type[0], arrayType) {
-			log().Tracef("Processing an array property %s", name)
+	jsonRep[name] = propertyJSON(s, resource, jsonResource)
+}
 
-			if s.Items != nil {
-				if s.Items.Schema != nil {
-					// Some outputs (example schema, member description) are generated differently
-					// if the array member references an object or a primitive type
-					r.Properties[name].Description = string(formatter.Markdown([]byte(s.Description)))
-
-					// If here, we have no jsonResource returned from resourceFromSchema, then the property
-					// is an array of primitive, so construct either an array of string or array of object
-					// as appropriate.
-					if len(jsonResource) > 0 {
-						var arrayObj []map[string]interface{}
-						arrayObj = append(arrayObj, jsonResource)
-						jsonRep[name] = arrayObj
-					} else {
-						var arrayObj []string
-						// We stored the real type of the primitive in Type array index 1 (see the note in
-						// resourceFromSchema). There is a special case of an array of object where EVERY
-						// member of the object is read-only and filtered out due to isRequestResource being true.
-						// In this case, we will fall into this section of code, so we must check the length
-						// of the .Type array, as array len will be 1 [0] in this case, and 2 [1] for an array of
-						// primitives case.
-						// In the case where object members are readonly, the JSON produced will have a
-						// value of nil. This shouldn't happen often, as a more correct spec will declare the
-						// array member as readOnly!
-						//
-						if len(r.Properties[name].Type) > 1 {
-							// Got an array of primitives
-							arrayObj = append(arrayObj, r.Properties[name].Type[1])
-						}
-
-						jsonRep[name] = arrayObj
-					}
-				} else { // array and property.Items.Schema is NIL
-					var arrayObj []map[string]interface{}
-					arrayObj = append(arrayObj, jsonResource)
-					jsonRep[name] = arrayObj
-				}
-			} else { // array and Items are nil
-				var arrayObj []map[string]interface{}
-				arrayObj = append(arrayObj, jsonResource)
-				jsonRep[name] = arrayObj
-			}
-		} else if strings.EqualFold(r.Properties[name].Type[0], "map") { // not array, so a map?
-			if strings.EqualFold(r.Properties[name].Type[1], "object") {
-				jsonRep[name] = jsonResource // A map of objects
-			} else {
-				jsonRep[name] = r.Properties[name].Type[1] // map of primitive
-			}
-		} else {
-			// We're NOT an array, map or object, so a primitive
-			jsonRep[name] = r.Properties[name].Type[0]
+func propertyJSON(s *spec.Schema, resource *Resource, object map[string]any) any {
+	switch {
+	case strings.EqualFold(resource.Type[0], objectType):
+		return object
+	case strings.EqualFold(resource.Type[0], arrayType):
+		if s.Items == nil || s.Items.Schema == nil {
+			return []map[string]any{object}
 		}
-	} else {
-		// We're an object
-		jsonRep[name] = jsonResource
+
+		resource.Description = string(formatter.Markdown([]byte(s.Description)))
+
+		if len(object) > 0 {
+			return []map[string]any{object}
+		}
+
+		var primitives []string
+		// Fully filtered read-only objects retain their original nil example.
+		if len(resource.Type) > 1 {
+			primitives = []string{resource.Type[1]}
+		}
+
+		return primitives
+	case strings.EqualFold(resource.Type[0], mapType):
+		if strings.EqualFold(resource.Type[1], objectType) {
+			return object
+		}
+
+		return resource.Type[1]
+	default:
+		return resource.Type[0]
 	}
 }
 
 func (p *Parameter) setType(src spec.Parameter) {
 	if src.Type == arrayType {
 		if src.CollectionFormat == "" {
-			src.CollectionFormat = "csv"
+			src.CollectionFormat = collectionCSV
 		}
 
 		p.Type = append(p.Type, src.Type)
@@ -1240,7 +1199,7 @@ func (p *Parameter) setType(src spec.Parameter) {
 }
 
 func (p *Parameter) setEnums(src spec.Parameter) {
-	var ea []interface{}
+	var ea []any
 
 	if src.Type == arrayType {
 		ea = src.Items.Enum
@@ -1248,7 +1207,7 @@ func (p *Parameter) setEnums(src spec.Parameter) {
 		ea = src.Enum
 	}
 
-	es := make([]string, 0)
+	es := make([]string, 0, len(ea))
 	for _, e := range ea {
 		es = append(es, fmt.Sprintf("%s", e))
 	}
@@ -1261,7 +1220,8 @@ func (r *Response) compileHeaders(sr *spec.Response) {
 		return
 	}
 
-	for name, params := range sr.Headers {
+	for name := range sr.Headers {
+		params := sr.Headers[name]
 		header := &Header{
 			Description: string(formatter.Markdown([]byte(params.Description))),
 			Name:        name,
@@ -1271,7 +1231,7 @@ func (r *Response) compileHeaders(sr *spec.Response) {
 
 		if params.Type == arrayType {
 			if params.CollectionFormat == "" {
-				params.CollectionFormat = "csv"
+				params.CollectionFormat = collectionCSV
 			}
 
 			header.Type = append(header.Type, params.Type)
@@ -1294,30 +1254,30 @@ func (r *Response) compileHeaders(sr *spec.Response) {
 func (api *APIGroup) getMethodSortKey(path, method, operation, navigation, summary string) string {
 	// Handle a list of sort-by values, so that ordering can be fixed.
 	// Sorting by path alone does not work because ordering changes around GET/POST/PUT Etc
-	var key string
+	var key strings.Builder
 
 	for _, sortby := range api.MethodSortBy {
 		switch sortby {
-		case "path":
-			key += path
-		case "method":
-			key += method
-		case "operation":
-			key += operation
-		case "navigation":
-			key += navigation
-		case "summary":
-			key += summary
+		case parameterPath:
+			key.WriteString(path)
+		case sortMethod:
+			key.WriteString(method)
+		case sortOperation:
+			key.WriteString(operation)
+		case sortNavigation:
+			key.WriteString(navigation)
+		case sortSummary:
+			key.WriteString(summary)
 		}
 
-		key += "~"
+		key.WriteString("~")
 	}
 
-	if key == "" {
-		key = summary
+	if key.Len() == 0 {
+		return summary
 	}
 
-	return key
+	return key.String()
 }
 
 func getTags(specification *spec.Swagger) []spec.Tag {
@@ -1331,13 +1291,12 @@ func getTags(specification *spec.Swagger) []spec.Tag {
 	return tags
 }
 
-func jsonResourceToString(jsonres map[string]interface{}, isArray bool) string {
+func jsonResourceToString(jsonres map[string]any, isArray bool) string {
 	// If the resource is an array, then append json object to outer array, else serialize the object.
 	var example []byte
 
 	if isArray {
-		var arrayObj []map[string]interface{}
-		arrayObj = append(arrayObj, jsonres)
+		arrayObj := []map[string]any{jsonres}
 		example, _ = jsonMarshalIndent(arrayObj)
 	} else {
 		example, _ = jsonMarshalIndent(jsonres)
@@ -1365,7 +1324,7 @@ func checkPropertyType(s *spec.Schema) string {
 	ptype := "primitive"
 
 	if s.Type == nil {
-		ptype = "object"
+		ptype = objectType
 	}
 
 	sOrig := s.Type
@@ -1380,7 +1339,7 @@ func checkPropertyType(s *spec.Schema) string {
 
 			if s.Type == nil {
 				ptype = "array of objects"
-				if s.SchemaProps.Type != nil {
+				if s.Type != nil {
 					ptype = "array of SOMETHING"
 				}
 			} else if s.Type.Contains(arrayType) {
@@ -1400,7 +1359,7 @@ func prepareNamespace(myFQNS []string, id, name string, chopped bool) []string {
 	newFQNS := append([]string{}, myFQNS...) // create slice
 
 	if chopped && id != "" {
-		log().Tracef("Append ID onto newFQNZ %s + %q", newFQNS, id)
+		log().Log(context.Background(), logger.LevelTrace, fmt.Sprintf("Append ID onto newFQNZ %s + %q", newFQNS, id))
 		newFQNS = append(newFQNS, id)
 	}
 
@@ -1422,32 +1381,32 @@ func camelToKebab(s string) string {
 }
 
 func loadSpec(location string) (*loads.Document, error) {
-	log().Infof("Importing OpenAPI specifications from %s", location)
+	log().Info(fmt.Sprintf("Importing OpenAPI specifications from %s", location))
 
-	raw, err := swag.LoadFromFileOrHTTP(location)
+	raw, err := loading.LoadFromFileOrHTTP(location)
 	if err != nil {
-		log().Errorf("Error: go-openapi/swag failed to load spec [%s]: %s", location, err)
+		log().Error(fmt.Sprintf("Error: go-openapi/swag failed to load spec [%s]: %s", location, err))
 
 		return nil, err
 	}
 
 	document, err := loads.Analyzed(json.RawMessage(replace(raw)), "")
 	if err != nil {
-		log().Errorf("Error: go-openapi/loads failed to analyze spec: %s", err)
+		log().Error(fmt.Sprintf("Error: go-openapi/loads failed to analyze spec: %s", err))
 
 		return nil, err
 	}
 
 	document, err = document.Expanded()
 	if err != nil {
-		log().Errorf("Error: go-openapi/loads failed to expand spec: %s", err)
+		log().Error(fmt.Sprintf("Error: go-openapi/loads failed to expand spec: %s", err))
 	}
 
 	return document, err
 }
 
 // jsonMarshalIndent Wrapper around MarshalIndent to prevent < > & from being escaped.
-func jsonMarshalIndent(v interface{}) ([]byte, error) {
+func jsonMarshalIndent(v any) ([]byte, error) {
 	b, err := json.MarshalIndent(v, "", "    ")
 
 	b = bytes.ReplaceAll(b, []byte("\\u003c"), []byte("<"))
@@ -1460,7 +1419,7 @@ func jsonMarshalIndent(v interface{}) ([]byte, error) {
 func isLocalSpecURL(specURL string) bool {
 	match, err := regexp.MatchString("(?i)^https?://.+", specURL)
 	if err != nil {
-		log().Panicf("Attempted to match against an invalid regexp: %s", err)
+		panic(fmt.Sprintf("Attempted to match against an invalid regexp: %s", err))
 	}
 
 	return !match
@@ -1468,15 +1427,15 @@ func isLocalSpecURL(specURL string) bool {
 
 func normalizeSpecLocation(specLocation string) string {
 	if isLocalSpecURL(specLocation) {
-		log().Debugf("SpecDir = %s", viper.GetString(config.SpecDir))
+		log().Debug(fmt.Sprintf("SpecDir = %s", viper.GetString(config.SpecDir)))
 
 		base, err := filepath.Abs(viper.GetString(config.SpecDir))
 		if err != nil {
-			log().Errorf("Error forming specification path: %s", err)
+			log().Error(fmt.Sprintf("Error forming specification path: %s", err))
 		}
 
 		base = filepath.ToSlash(base)
-		log().Debugf("SpecDir (base) = %s", base)
+		log().Debug(fmt.Sprintf("SpecDir (base) = %s", base))
 
 		return filepath.Join(base, specLocation)
 	}
@@ -1508,7 +1467,7 @@ func getFormat(h spec.Header) string {
 }
 
 func getEnums(h spec.Header) []string {
-	var ea []interface{}
+	var ea []any
 
 	if h.Type == arrayType {
 		ea = h.Items.Enum
@@ -1516,7 +1475,7 @@ func getEnums(h spec.Header) []string {
 		ea = h.Enum
 	}
 
-	es := make([]string, 0)
+	es := make([]string, 0, len(ea))
 	for _, e := range ea {
 		es = append(es, fmt.Sprintf("%s", e))
 	}

@@ -69,15 +69,11 @@ func TestConcurrentRenderCounterAndNestedOverlays(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 32 {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			for range 20 {
 				var output bytes.Buffer
 
-				ctx.HTML(&output, http.StatusOK, "page", map[string]interface{}{"SpecificationList": true})
+				ctx.HTML(&output, http.StatusOK, "page", map[string]any{"SpecificationList": true})
 
 				if got := strings.ReplaceAll(output.String(), "\n", ""); got != "<body>1|2/3|4</body>" {
 					t.Errorf("counter or overlay changed: %q", got)
@@ -85,7 +81,7 @@ func TestConcurrentRenderCounterAndNestedOverlays(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -105,14 +101,14 @@ func TestOverlayPrecedenceAndFutureSections(t *testing.T) {
 
 	var output bytes.Buffer
 
-	ctx.HTML(&output, http.StatusOK, "page", map[string]interface{}{"SpecificationSummary": true, "ID": "future"})
+	ctx.HTML(&output, http.StatusOK, "page", map[string]any{"SpecificationSummary": true, "ID": "future"})
 
 	if strings.TrimSpace(output.String()) != "specific" {
 		t.Fatalf("section overlay did not take precedence: %q", output.String())
 	}
 
 	output.Reset()
-	ctx.HTML(&output, http.StatusOK, "page", map[string]interface{}{"SpecificationSummary": true, "ID": "other"})
+	ctx.HTML(&output, http.StatusOK, "page", map[string]any{"SpecificationSummary": true, "ID": "other"})
 
 	if strings.TrimSpace(output.String()) != "global" {
 		t.Fatalf("global fallback changed: %q", output.String())
@@ -124,12 +120,12 @@ func TestStatusWarningCustomLayoutAndRequestIsolation(t *testing.T) {
 		"templates/layout.tmpl": `<html><head><script>var body = "<body>";</script></head><BODY class="custom" data-sign=">">[: yield :]</BODY></html>`,
 		"templates/page.tmpl":   `content`,
 	})
-	last := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	last := time.Date(2026, time.November, 11, 12, 0, 0, 0, time.UTC)
 	status := map[string]Status{
 		"one": {State: "stale", Name: "<script>alert(1)</script>\nAPI", LastSuccess: last},
 		"two": {State: "stale", Name: "Other API", LastSuccess: last},
 	}
-	request := WithStatus(httptest.NewRequest(http.MethodGet, "/", http.NoBody), status)
+	request := WithStatus(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody), status)
 	vars := ctx.DefaultVars(request, &spec.APISpecification{ID: "one"}, nil)
 	w := httptest.NewRecorder()
 	ctx.HTML(w, http.StatusOK, "page", vars)
@@ -150,7 +146,7 @@ func TestStatusWarningCustomLayoutAndRequestIsolation(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	ctx.HTML(w, http.StatusOK, "page", ctx.DefaultVars(httptest.NewRequest(http.MethodGet, "/", http.NoBody), nil, nil))
+	ctx.HTML(w, http.StatusOK, "page", ctx.DefaultVars(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody), nil, nil))
 
 	if strings.Contains(w.Body.String(), "documentation-status-warning") {
 		t.Fatal("request status leaked")
@@ -234,7 +230,7 @@ func TestPackagedThemes(t *testing.T) {
 
 			var b bytes.Buffer
 
-			ctx.HTML(&b, http.StatusNotFound, "error", map[string]interface{}{"error": "Not found", "code": http.StatusNotFound})
+			ctx.HTML(&b, http.StatusNotFound, "error", map[string]any{"error": "Not found", "code": http.StatusNotFound})
 
 			if !strings.Contains(b.String(), "Not found") {
 				t.Fatalf("theme %s failed: %s", theme, b.String())
@@ -272,8 +268,8 @@ func TestConsumingCiscoTheme(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	last := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
-	request := WithStatus(httptest.NewRequest(http.MethodGet, "/", http.NoBody), map[string]Status{
+	last := time.Date(2026, time.November, 11, 12, 0, 0, 0, time.UTC)
+	request := WithStatus(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody), map[string]Status{
 		"stale-api": {State: "stale", Name: "<Stale API>", LastSuccess: last},
 	})
 	binding := ctx.DefaultVars(request, nil, Vars{"Title": "Specifications list", "SpecificationList": true})
