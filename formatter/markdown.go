@@ -40,9 +40,10 @@ var policy = func() *bluemonday.Policy {
 
 var markdown = newMarkdown()
 
-var inlineRenderer = renderer.NewRenderer(renderer.WithNodeRenderers(
-	util.Prioritized(goldhtml.NewRenderer(goldhtml.WithUnsafe()), compatibilityPriority),
-))
+var inlineRenderer = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
+	goldmark.WithRendererOptions(goldhtml.WithUnsafe()),
+).Renderer()
 
 func newMarkdown() goldmark.Markdown {
 	blocks := parser.DefaultBlockParsers()

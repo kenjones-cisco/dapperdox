@@ -22,6 +22,7 @@ func TestConcurrentMarkdownRendering(t *testing.T) {
 	}{
 		{"Go", "# First\n\n```Go\nvar value = 1\n```\n", `name="first"`, `<span class="k">var</span>`},
 		{"diff", "# Second\n\n```diff\n-old\n+new\n```\n", `name="second"`, `class="gi input-block"`},
+		{"strikethrough", "# ~~Deleted~~ heading\n", `name="deleted-heading"`, "<del>Deleted</del> heading</h1>"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -134,6 +135,30 @@ func TestMarkdownPreservesDuplicateAnchorTargets(t *testing.T) {
 	output := string(Markdown([]byte("# Repeat\n\n# Repeat\n")))
 	if strings.Count(output, `name="repeat"`) != 2 || strings.Contains(output, `name="repeat-1"`) {
 		t.Fatalf("legacy heading targets changed: %s", output)
+	}
+}
+
+func TestMarkdownStrikethroughHeading(t *testing.T) {
+	for _, tt := range []struct {
+		name, source, anchor, content string
+	}{
+		{"simple", "# ~~deleted~~ heading\n", "deleted-heading", "<del>deleted</del> heading"},
+		{"nested", "# ~~**deleted** `code`~~ heading\n", "deleted-code-heading", "<del><strong>deleted</strong> <code>code</code></del> heading"},
+		{"link", "# [~~deleted~~](/guide) heading\n", "deleted-heading", `<a href="/guide" rel="nofollow"><del>deleted</del></a> heading`},
+		{"entity", "# ~~Café &amp; Pets~~\n", "café-pets", "<del>Café &amp; Pets</del>"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			output := string(Markdown([]byte(tt.source)))
+			for _, want := range []string{`name="` + tt.anchor + `"`, tt.content + "</h1>"} {
+				if !strings.Contains(output, want) {
+					t.Errorf("rendered heading missing %q: %s", want, output)
+				}
+			}
+
+			if tt.name == "simple" && !strings.Contains(output, `href="#deleted-heading"`) {
+				t.Errorf("rendered heading missing anchor link: %s", output)
+			}
+		})
 	}
 }
 

@@ -111,7 +111,9 @@ still applies to all generated output, including embedded author HTML.
 
 Existing named heading anchors (including duplicate names), code wrappers,
 theme token classes, custom `gfm.map` processing, and supported task-list
-checkboxes are retained. Compatibility adapters preserve literal `1)` guide
+checkboxes are retained. GFM formatting in headings, including strikethrough,
+is preserved in the visible heading and reduced to text for anchor names.
+Compatibility adapters preserve literal `1)` guide
 steps and Markdown immediately following a completed HTML paragraph spacer.
 
 Parsing otherwise follows CommonMark/GFM rather than Blackfriday quirks.
