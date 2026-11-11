@@ -101,6 +101,32 @@ Go HTTP fixtures in [handlers/compatibility_test.go](handlers/compatibility_test
 protect public URLs, redirects, heading anchors, Markdown guides, section-overlay
 precedence, explorer markup, and specification downloads.
 
+### Markdown rendering
+
+Markdown uses Goldmark **v1.8.7** with GFM extensions and Chroma **v2.27.0**
+for server-side `Go`, `Go-unformatted`, and `diff` highlighting. Other fenced
+languages remain escaped, unhighlighted code; this change does not add languages
+or alter browser-side highlighting. Bluemonday's existing sanitization policy
+still applies to all generated output, including embedded author HTML.
+
+Existing named heading anchors (including duplicate names), code wrappers,
+theme token classes, custom `gfm.map` processing, and supported task-list
+checkboxes are retained. GFM formatting in headings, including strikethrough,
+is preserved in the visible heading and reduced to text for anchor names.
+Compatibility adapters preserve literal `1)` guide
+steps and Markdown immediately following a completed HTML paragraph spacer.
+
+Parsing otherwise follows CommonMark/GFM rather than Blackfriday quirks.
+Blank-line-separated quotations now render as separate blockquotes; this adds
+spacing between adjacent Warning/Note sections in the consuming guide.
+HTML whitespace and attribute order may change. Diff highlighting retains
+addition/deletion/hunk styles but no longer emits the old intraline `.x` spans.
+The stable heading-name helper is deliberately retained to avoid breaking links.
+
+This server-side migration is independent of browser libraries, templates and
+static assets. Roll back its commit to restore the previous engine; no content,
+configuration, browser migration, or persisted-data conversion is required.
+
 ### Configuration and parser ownership
 
 Startup loads a typed `config.Settings` once with unchanged configuration keys

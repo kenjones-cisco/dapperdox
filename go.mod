@@ -3,6 +3,7 @@ module github.com/kenjones-cisco/dapperdox
 go 1.26.11
 
 require (
+	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/go-openapi/loads v0.25.3
 	github.com/go-openapi/spec v1.0.1
 	github.com/go-openapi/swag/loading v0.29.2
@@ -10,15 +11,11 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/justinas/nosurf v1.2.0
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/russross/blackfriday v1.6.0
 	github.com/serenize/snaker v0.0.0-20201027110005-a7ad2135616e
-	github.com/shurcooL/highlight_diff v0.0.0-20230708024848-22f825814995
-	github.com/shurcooL/highlight_go v0.0.0-20230708025100-33e05792540a
 	github.com/shurcooL/sanitized_anchor_name v1.0.0
-	github.com/sourcegraph/annotate v0.0.0-20160123013949-f4cad6c6324d
-	github.com/sourcegraph/syntaxhighlight v0.0.0-20170531221838-bd320f5d308e
 	github.com/spf13/pflag v1.1.0
 	github.com/spf13/viper v1.21.0
+	github.com/yuin/goldmark v1.8.7
 	golang.org/x/net v0.62.0
 	k8s.io/api v0.33.13
 	k8s.io/apimachinery v0.33.13
@@ -28,6 +25,7 @@ require (
 require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.14.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
@@ -63,9 +61,6 @@ require (
 	github.com/onsi/ginkgo v1.14.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
-	github.com/sergi/go-diff v1.4.0 // indirect
-	github.com/shurcooL/go v0.0.0-20200502201357-93f07166e636 // indirect
-	github.com/shurcooL/go-goon v0.0.0-20170922171312-37c2f522c041 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect

@@ -1,45 +1,30 @@
-/*
-Package formatter provides a GitHub Flavored Markdown renderer
-with fenced code block highlighting, clickable heading anchor links.
-
-The functionality should be equivalent to the GitHub Markdown API endpoint specified at
-https://developer.github.com/v3/markdown/#render-a-markdown-document-in-raw-mode, except
-the rendering is performed locally.
-
-See examples for how to generate a complete HTML page, including CSS styles.
-*/
+// Package formatter renders sanitized Markdown with stable heading links and code styles.
 package formatter
 
 import (
 	"bytes"
 	"fmt"
+	"html"
+	"log/slog"
 	"regexp"
-	"sort"
 	"strings"
-	"text/template"
 
 	"github.com/microcosm-cc/bluemonday"
-	"github.com/russross/blackfriday"
-	"github.com/shurcooL/highlight_diff"
-	"github.com/shurcooL/highlight_go"
 	"github.com/shurcooL/sanitized_anchor_name"
-	"github.com/sourcegraph/annotate"
-	"github.com/sourcegraph/syntaxhighlight"
-	"golang.org/x/net/html"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer"
+	goldhtml "github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/util"
+	nethtml "golang.org/x/net/html"
+
+	"github.com/kenjones-cisco/dapperdox/logger"
 )
 
-const htmlFlags = 0
+const compatibilityPriority = 100
 
-// extensions for GitHub Flavored Markdown-like parsing.
-const extensions = blackfriday.EXTENSION_NO_INTRA_EMPHASIS |
-	blackfriday.EXTENSION_TABLES |
-	blackfriday.EXTENSION_FENCED_CODE |
-	blackfriday.EXTENSION_AUTOLINK |
-	blackfriday.EXTENSION_STRIKETHROUGH |
-	blackfriday.EXTENSION_SPACE_HEADERS |
-	blackfriday.EXTENSION_NO_EMPTY_LINE_BEFORE_BLOCK
-
-// policy for GitHub Flavored Markdown-like sanitization.
 var policy = func() *bluemonday.Policy {
 	p := bluemonday.UGCPolicy()
 	p.AllowAttrs("class").Matching(bluemonday.SpaceSeparatedTokens).OnElements("div", "span")
@@ -53,285 +38,127 @@ var policy = func() *bluemonday.Policy {
 	return p
 }()
 
-// Markdown renders GitHub Flavored Markdown text.
+var markdown = newMarkdown()
+
+var inlineRenderer = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
+	goldmark.WithRendererOptions(goldhtml.WithUnsafe()),
+).Renderer()
+
+func newMarkdown() goldmark.Markdown {
+	blocks := parser.DefaultBlockParsers()
+	for i := range blocks {
+		if blocks[i].Value == parser.NewListParser() {
+			blocks[i].Value = &compatibilityListParser{parser.NewListParser()}
+		}
+
+		if blocks[i].Value == parser.NewHTMLBlockParser() {
+			blocks[i].Value = &compatibilityHTMLParser{parser.NewHTMLBlockParser()}
+		}
+	}
+
+	return goldmark.New(
+		goldmark.WithParser(parser.NewParser(
+			parser.WithBlockParsers(blocks...),
+			parser.WithInlineParsers(parser.DefaultInlineParsers()...),
+			parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
+		)),
+		goldmark.WithExtensions(extension.GFM),
+		// Embedded author HTML is accepted only through the sanitizer below.
+		goldmark.WithRendererOptions(goldhtml.WithUnsafe(), renderer.WithNodeRenderers(
+			util.Prioritized(&compatibilityRenderer{}, compatibilityPriority),
+		)),
+	)
+}
+
+// Markdown renders CommonMark/GFM while retaining the documentation theme contracts.
 func Markdown(text []byte) []byte {
-	r := &renderer{Html: blackfriday.HtmlRenderer(htmlFlags, "", "").(*blackfriday.Html)}
-	unsanitized := blackfriday.Markdown(text, r, extensions)
+	var out bytes.Buffer
+	if err := markdown.Convert(text, &out); err != nil {
+		logger.Logger().Error("render Markdown", slog.Any("error", err))
 
-	return policy.SanitizeBytes(unsanitized)
-}
-
-type renderer struct {
-	*blackfriday.Html
-}
-
-// GitHub Flavored Markdown heading with clickable and hidden anchor.
-func (*renderer) Header(out *bytes.Buffer, text func() bool, level int, _ string) {
-	marker := out.Len()
-	doubleSpace(out)
-
-	if !text() {
-		out.Truncate(marker)
-
-		return
+		return []byte("<p>Unable to render Markdown.</p>")
 	}
 
-	textHTML := out.String()[marker:]
-	out.Truncate(marker)
-
-	// Extract text content of the heading.
-	var textContent string
-	if node, err := html.Parse(strings.NewReader(textHTML)); err == nil {
-		textContent = extractText(node)
-	} else {
-		// Failed to parse HTML (probably can never happen), so just use the whole thing.
-		textContent = html.UnescapeString(textHTML)
-	}
-
-	anchorName := sanitized_anchor_name.Create(textContent)
-
-	_, _ = fmt.Fprintf(out, `<h%d><a name=%q class="anchor" href="#%s" rel="nofollow" aria-hidden="true"><span class="octicon octicon-link"></span></a>`, level, anchorName, anchorName)
-	_, _ = out.WriteString(textHTML)
-	_, _ = fmt.Fprintf(out, "</h%d>\n", level)
+	return policy.SanitizeBytes(out.Bytes())
 }
 
-// extractText returns the recursive concatenation of the text content of an html node.
-func extractText(n *html.Node) string {
+type compatibilityRenderer struct{}
+
+func (*compatibilityRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(ast.KindHeading, renderHeading)
+	reg.Register(ast.KindFencedCodeBlock, renderCodeBlock)
+}
+
+func renderHeading(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	heading := node.(*ast.Heading)
+	if !entering {
+		_, err := fmt.Fprintf(w, "</h%d>\n", heading.Level)
+
+		return ast.WalkContinue, err
+	}
+
+	var content bytes.Buffer
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		if err := inlineRenderer.Render(&content, source, child); err != nil {
+			return ast.WalkStop, err
+		}
+	}
+
+	tree, err := nethtml.Parse(&content)
+	if err != nil {
+		return ast.WalkStop, err
+	}
+
+	anchor := sanitized_anchor_name.Create(extractText(tree))
+	_, err = fmt.Fprintf(w, `<h%d><a name="%s" class="anchor" href="#%s" rel="nofollow" aria-hidden="true"><span class="octicon octicon-link"></span></a>`,
+		heading.Level, html.EscapeString(anchor), html.EscapeString(anchor))
+
+	return ast.WalkContinue, err
+}
+
+func extractText(node *nethtml.Node) string {
 	var out strings.Builder
 
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.TextNode {
-			out.WriteString(c.Data)
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == nethtml.TextNode {
+			out.WriteString(child.Data)
 		} else {
-			out.WriteString(extractText(c))
+			out.WriteString(extractText(child))
 		}
 	}
 
 	return out.String()
 }
 
-// TODO: Clean up and improve this code.
-// GitHub Flavored Markdown fenced code block with highlighting.
-func (*renderer) BlockCode(out *bytes.Buffer, text []byte, lang string) {
-	doubleSpace(out)
-
-	// parse out the language name
-	count := 0
-
-	for elt := range strings.FieldsSeq(lang) {
-		if elt[0] == '.' {
-			elt = elt[1:]
-		}
-
-		if elt == "" {
-			continue
-		}
-
-		_, _ = out.WriteString(`<div class="highlight highlight-`)
-		attrEscape(out, []byte(elt))
-		lang = elt
-		_, _ = out.WriteString(`"><pre>`)
-		count++
-
-		break
+func renderCodeBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
 	}
 
-	if count == 0 {
-		_, _ = out.WriteString("<pre><code>")
+	block := node.(*ast.FencedCodeBlock)
+	language := strings.TrimPrefix(string(block.Language(source)), ".")
+
+	var code bytes.Buffer
+
+	for i := range block.Lines().Len() {
+		line := block.Lines().At(i)
+		code.Write(line.Value(source))
 	}
 
-	if highlightedCode, ok := highlightCode(text, lang); ok {
-		_, _ = out.Write(highlightedCode)
-	} else {
-		attrEscape(out, text)
+	if language == "" {
+		_, err := fmt.Fprintf(w, "<pre><code>%s</code></pre>\n", html.EscapeString(code.String()))
+
+		return ast.WalkSkipChildren, err
 	}
 
-	if count == 0 {
-		_, _ = out.WriteString("</code></pre>\n")
-	} else {
-		_, _ = out.WriteString("</pre></div>\n")
-	}
-}
-
-// Task List support.
-func (r *renderer) ListItem(out *bytes.Buffer, text []byte, flags int) {
-	switch {
-	case bytes.HasPrefix(text, []byte("[ ] ")):
-		text = append([]byte(`<input type="checkbox" disabled="">`), text[3:]...)
-	case bytes.HasPrefix(text, []byte("[x] ")) || bytes.HasPrefix(text, []byte("[X] ")):
-		text = append([]byte(`<input type="checkbox" checked="" disabled="">`), text[3:]...)
-	}
-
-	r.Html.ListItem(out, text, flags)
-}
-
-var gfmHTMLConfig = syntaxhighlight.HTMLConfig{
-	String:        "s",
-	Keyword:       "k",
-	Comment:       "c",
-	Type:          "n",
-	Literal:       "o",
-	Punctuation:   "p",
-	Plaintext:     "n",
-	Tag:           "tag",
-	HTMLTag:       "htm",
-	HTMLAttrName:  "atn",
-	HTMLAttrValue: "atv",
-	Decimal:       "m",
-}
-
-func highlightCode(src []byte, lang string) ([]byte, bool) {
-	switch lang {
-	case "Go", "Go-unformatted":
-		return highlightGo(src)
-	case "diff":
-		return highlightDiff(src)
-	default:
-		return nil, false
-	}
-}
-
-func highlightGo(src []byte) ([]byte, bool) {
-	var buf bytes.Buffer
-
-	if err := highlight_go.Print(src, &buf, syntaxhighlight.HTMLPrinter(gfmHTMLConfig)); err != nil {
-		return nil, false
-	}
-
-	return buf.Bytes(), true
-}
-
-func highlightDiff(src []byte) ([]byte, bool) {
-	anns, err := highlight_diff.Annotate(src)
+	highlighted, err := highlightCode(code.String(), language)
 	if err != nil {
-		return nil, false
+		return ast.WalkStop, err
 	}
 
-	lines := bytes.Split(src, []byte("\n"))
-	lineStarts := make([]int, len(lines))
+	_, err = fmt.Fprintf(w, "<div class=\"highlight highlight-%s\"><pre>%s</pre></div>\n",
+		html.EscapeString(language), highlighted)
 
-	var offset int
-
-	for lineIndex := range lines {
-		lineStarts[lineIndex] = offset
-		offset += len(lines[lineIndex]) + 1
-	}
-
-	lastDel, lastIns := -1, -1
-
-	for lineIndex := range lines {
-		var lineFirstChar byte
-
-		if len(lines[lineIndex]) > 0 {
-			lineFirstChar = lines[lineIndex][0]
-		}
-
-		switch lineFirstChar {
-		case '+':
-			if lastIns == -1 {
-				lastIns = lineIndex
-			}
-		case '-':
-			if lastDel == -1 {
-				lastDel = lineIndex
-			}
-		default:
-			if lastDel != -1 || lastIns != -1 {
-				anns = append(anns, diffBlockAnnotations(lines, lineStarts, lastDel, lastIns, lineIndex, lineFirstChar != '@')...)
-			}
-
-			lastDel, lastIns = -1, -1
-		}
-	}
-
-	sort.Sort(anns)
-
-	out, err := annotate.Annotate(src, anns, template.HTMLEscape)
-	if err != nil {
-		return nil, false
-	}
-
-	return out, true
-}
-
-func diffBlockAnnotations(lines [][]byte, starts []int, deleted, inserted, end int, highlight bool) []*annotate.Annotation {
-	if deleted == -1 {
-		deleted = inserted
-	} else if inserted == -1 {
-		inserted = end
-	}
-
-	left, right := starts[deleted], starts[inserted]
-	annotations := []*annotate.Annotation{
-		{Start: left, End: starts[inserted], Left: []byte(`<span class="gd input-block">`), Right: []byte(`</span>`)},
-		{Start: right, End: starts[end], Left: []byte(`<span class="gi input-block">`), Right: []byte(`</span>`)},
-	}
-
-	if highlight {
-		var segments [2][]*annotate.Annotation
-		highlight_diff.HighlightedDiffFunc(diffContent(lines[deleted:inserted]), diffContent(lines[inserted:end]), &segments, [2]int{left, right})
-		annotations = append(annotations, segments[0]...)
-		annotations = append(annotations, segments[1]...)
-	}
-
-	return annotations
-}
-
-func diffContent(lines [][]byte) string {
-	var content strings.Builder
-	for _, line := range lines {
-		content.WriteByte(0)
-		content.Write(line[1:])
-		content.WriteByte('\n')
-	}
-
-	return content.String()
-}
-
-// Unexported blackfriday helpers.
-
-func doubleSpace(out *bytes.Buffer) {
-	if out.Len() > 0 {
-		_ = out.WriteByte('\n')
-	}
-}
-
-func escapeSingleChar(char byte) (string, bool) {
-	if char == '"' {
-		return "&quot;", true
-	}
-
-	if char == '&' {
-		return "&amp;", true
-	}
-
-	if char == '<' {
-		return "&lt;", true
-	}
-
-	if char == '>' {
-		return "&gt;", true
-	}
-
-	return "", false
-}
-
-func attrEscape(out *bytes.Buffer, src []byte) {
-	org := 0
-
-	for i, ch := range src {
-		if entity, ok := escapeSingleChar(ch); ok {
-			if i > org {
-				// copy all the normal characters since the last escape
-				_, _ = out.Write(src[org:i])
-			}
-
-			org = i + 1
-			_, _ = out.WriteString(entity)
-		}
-	}
-
-	if org < len(src) {
-		_, _ = out.Write(src[org:])
-	}
+	return ast.WalkSkipChildren, err
 }
