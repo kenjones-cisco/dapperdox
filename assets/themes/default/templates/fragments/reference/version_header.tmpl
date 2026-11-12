@@ -1,19 +1,19 @@
 <!-- Required .API and .Title parameters -->
 <div class="page-header">
-  <h1 class="pull-left nomargin">[: .Title :] [: .TitleSuffix :]</h1>
+  <h1 class="float-start nomargin">[: .Title :] [: .TitleSuffix :]</h1>
   [: if .Versions :]
-    <div class="pull-right">
+    <div class="float-end">
       <div class="btn-group">
-        <button class="nopadding btn btn-primary dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-          Version [: .Version :] <span class="caret" />
+        <button class="nopadding btn btn-primary dropdown-toggle" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+          Version [: .Version :]
         </button>
-        <ul class="dropdown-menu pull-right">
+        <ul class="dropdown-menu dropdown-menu-end">
           [: range $version := .Versions :]
-          <li><a href="?v=[: $version :]">[: $version :]</a></li>
+          <li><a class="dropdown-item" href="?v=[: $version :]">[: $version :]</a></li>
           [: end :]
           [: if $.LatestVersion :]
-            <li role="separator" class="divider"></li>
-            <li><a href="?">Latest version [: $.LatestVersion :]</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="?">Latest version [: $.LatestVersion :]</a></li>
           [: end :]
         </ul>
       </div>

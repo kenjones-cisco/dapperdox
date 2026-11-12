@@ -1,15 +1,13 @@
 [:define "explorer_file_upload":]
 
 <div class="input-group">
-   <label class="input-group-btn">
-       <span class="btn btn-primary">
+   <label class="btn btn-primary">
            Browse&hellip;<input id="[: .Param.Name :]" type="file" data-type="[: .Section :]" name="[: .Param.Name :]" value=""  class="form-control" accept="[: join .Method.Consumes ", " :]" style="display: none;"
 
         [: if .Param.Required :]
             placeholder="Required" required="required"
         [: end :]
     />
-       </span>
    </label>
    <input type="text" class="form-control" readonly>
 </div>

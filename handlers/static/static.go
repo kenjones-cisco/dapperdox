@@ -45,6 +45,14 @@ func Register(r *mux.Router, renderer *render.Context) {
 
 	for _, file := range renderer.Assets.Names() {
 		mimeType := mime.TypeByExtension(filepath.Ext(file))
+		switch filepath.Ext(file) {
+		case ".js":
+			mimeType = "application/javascript"
+		case ".woff":
+			mimeType = "font/woff"
+		case ".woff2":
+			mimeType = "font/woff2"
+		}
 
 		if mimeType == "" {
 			continue
@@ -55,6 +63,7 @@ func Register(r *mux.Router, renderer *render.Context) {
 		switch {
 		case strings.HasPrefix(mimeType, "image"),
 			strings.HasPrefix(mimeType, "text/css"),
+			mimeType == "font/woff", mimeType == "font/woff2",
 			strings.HasSuffix(mimeType, "javascript"):
 			allow = true
 		default:

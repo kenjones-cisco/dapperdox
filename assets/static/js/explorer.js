@@ -100,6 +100,7 @@ var _procMime = function( types, loc ) {
 // --------------------------------------------------------------------------------------
 var _process = function(text, status, xhr, fullhost) {
     var content = xhr.getResponseHeader('Content-Type');
+    var responseBytes = text instanceof ArrayBuffer ? text : null;
 
     // Clean up previously opened result blocks
     $('#html_block').hide();
@@ -118,21 +119,27 @@ var _process = function(text, status, xhr, fullhost) {
         }
         else
         {
+            if (responseBytes && /json|xml|yaml|html|text\/plain/.test(content)) {
+                var charset = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s]*))/i.exec(content);
+                var encoding = charset ? (charset[1] || charset[2] || charset[3]) : "utf-8";
+                text = new TextDecoder(encoding || "utf-8").decode(responseBytes);
+            }
+
             if( content.match(/json/) ) 
             {
                 $('#body_block').show();
-                $('#response_body').html( hljs.highlight( 'json', JSON.stringify(JSON.parse(text), null, 2) ).value );
+                $('#response_body').html( hljs.highlight( JSON.stringify(JSON.parse(text), null, 2), {language: 'json'} ).value );
 
             }
             else if( content.match(/xml/) )
             {
                 $('#body_block').show();
-                $('#response_body').html( hljs.highlight( 'xml', text ).value );
+                $('#response_body').html( hljs.highlight( text, {language: 'xml'} ).value );
             }
             else if( content.match(/yaml/) ) // TODO Needs testing
             {
                 $('#body_block').show();
-                $('#response_body').html( hljs.highlight( 'yaml', text ).value );
+                $('#response_body').html( hljs.highlight( text, {language: 'yaml'} ).value );
             }
             else if( content.match(/html/) )
             {
@@ -157,11 +164,16 @@ var _process = function(text, status, xhr, fullhost) {
                 // Try and force a "Download" here. API might be
                 // returning a file (PDF for example).
                 //
-                var bytes=new Array(text.length);
-                for (var i=0;i<text.length; i++) bytes[i]=text.charCodeAt(i);
-                var blob=new Blob([new Uint8Array(bytes)]);
+                var blob=new Blob([responseBytes || text]);
               
-                saveAs( blob, "explorer_response.txt" );
+                var downloadURL = URL.createObjectURL(blob);
+                var download = document.createElement('a');
+                download.href = downloadURL;
+                download.download = "explorer_response.txt";
+                document.body.appendChild(download);
+                download.click();
+                download.remove();
+                setTimeout(function() { URL.revokeObjectURL(downloadURL); }, 1000);
 
                 $('#body_block').show();
                 $('#response_body').html( hljs.highlightAuto( "Downloaded data" ).value );
@@ -177,7 +189,7 @@ var _process = function(text, status, xhr, fullhost) {
     $('#response').fadeIn().show();
 
     $('#response_code').text( xhr.status + ' ' + xhr.statusText );
-    $('#response_headers').html( hljs.highlight( 'http', xhr.getAllResponseHeaders() ).value );
+    $('#response_headers').html( hljs.highlight( xhr.getAllResponseHeaders(), {language: 'http'} ).value );
 
     $('#exploreButton').removeAttr('disabled');
 }
@@ -305,7 +317,7 @@ apiExplorer.go = function( method, url ){
             // Target outer "group" with has-error class, as well as the input field. This gives a bit of flexibility
             $('#'+value.prop('name')+'-group').addClass("has-error");
             value.addClass("has-error");
-            value.wiggle();
+            value.trigger('focus');
         });
         $('#results').hide();
         return;
@@ -413,24 +425,24 @@ apiExplorer.go = function( method, url ){
     var constructed_request = _get_url( url, query );
 
     // TODO Get protocol from passed in url
-    $('#request_url').html( hljs.highlight( 'http', method.toUpperCase() + ' ' + display_url + ' HTTP/1.1\nHost: ' + constructed_request.fullhost + display_content_type + display_headers ).value );
+    $('#request_url').html( hljs.highlight( method.toUpperCase() + ' ' + display_url + ' HTTP/1.1\nHost: ' + constructed_request.fullhost + display_content_type + display_headers, {language: 'http'} ).value );
 
     $('#exploreButton').attr('disabled', 'disabled');
-
-    $.support.cors = true;
 
     $.ajax({
         url: constructed_request.fullUrl,
         async: true,
         data: data,
         type: method,
-        dataType: "text", // Prevents .ajax from parsing response (JSON.parse in _process does this)
+        dataType: "binary",
+        xhrFields: { responseType: "arraybuffer" },
+        responseFields: { binary: "response" },
         contentType: got_form_data ? false : request_content_type, // MUST be false if we've got formData, else real type.
         traditional: true,
         processData: false, // Must be False for FormData
 
         success:  function( text, status, xhr)  { _process(text, status, xhr, constructed_request.fullhost) },
-        error:    function( xhr,  status, text) { _process(xhr.responseText,  status, xhr, constructed_request.fullhost) },
+        error:    function( xhr,  status, text) { _process(xhr.response || "", status, xhr, constructed_request.fullhost) },
         beforeSend: function( request ) {
             _set_headers( request, headers );
             $('#progress').stop(1,0).hide().delay(800).fadeIn();

@@ -74,4 +74,22 @@ func TestDocumentationCompatibility(t *testing.T) {
 			}
 		})
 	}
+
+	for _, file := range []struct {
+		path, contentType, signature string
+	}{
+		{"/browser/files/open-sans-latin-400-normal.woff2", "font/woff2", "wOF2"},
+		{"/browser/files/open-sans-latin-400-normal.woff", "font/woff", "wOFF"},
+		{"/browser/browser.js", "application/javascript", ""},
+		{"/js/explorer.js", "application/javascript", ""},
+	} {
+		t.Run(file.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, file.path, http.NoBody))
+
+			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != file.contentType || response.Body.Len() == 0 || !strings.HasPrefix(response.Body.String(), file.signature) {
+				t.Fatalf("asset not served with valid bytes and MIME type: status=%d type=%q", response.Code, response.Header().Get("Content-Type"))
+			}
+		})
+	}
 }

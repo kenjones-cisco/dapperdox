@@ -3,7 +3,7 @@
   [: range $nav := .NavigationGuides :]
     <li>
       [: if $nav.Children :]
-        <a [: if $nav.URI :]href="[: $nav.URI :]"[: end :] id="toggle[: $nav.ID :]" [: if $nav.Children :]class="nav-toggle collapsed" data-toggle="collapse" data-target="#ul[: $nav.ID :]" data-outer="[: $nav.ID :]" [: end :]>[: $nav.Name :]</a>
+        <a [: if $nav.URI :]href="[: $nav.URI :]"[: end :] id="toggle[: $nav.ID :]" [: if $nav.Children :]class="nav-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#ul[: $nav.ID :]" data-outer="[: $nav.ID :]" [: end :]>[: $nav.Name :]</a>
         <ul class="nav collapse nav-inner" id="ul[: $nav.ID :]">
           [: range $child := $nav.Children :]
             <li><a href="[: $child.URI :]" data-outer="[: $nav.ID :]">[: $child.Name :]</a></li>

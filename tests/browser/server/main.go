@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"mime"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/kenjones-cisco/dapperdox/config"
@@ -14,11 +16,6 @@ import (
 )
 
 func main() {
-	// Keep static JavaScript registration independent of the image's MIME database.
-	if err := mime.AddExtensionType(".js", "application/javascript"); err != nil {
-		log.Fatal(err)
-	}
-
 	var lc net.ListenConfig
 
 	listener, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:32179")
@@ -26,13 +23,23 @@ func main() {
 		log.Fatal(err)
 	}
 
+	assets, theme := os.Getenv("BROWSER_TEST_ASSETS"), os.Getenv("BROWSER_TEST_THEME")
+	if assets == "" {
+		assets = "fixtures/compatibility/assets"
+	}
+
+	if theme == "" {
+		theme = "default"
+	}
+
 	router, err := handlers.NewRouterChainWithConfig(config.Settings{
 		DefaultAssetsDir: "assets",
-		AssetsDir:        "fixtures/compatibility/assets",
-		Theme:            "default",
+		AssetsDir:        assets,
+		Theme:            theme,
 		SpecDir:          "fixtures/compatibility",
 		SpecFilename:     []string{"swagger.json"},
 		SpecDefaultHost:  listener.Addr().String(),
+		ForceSpecList:    true,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -45,9 +52,62 @@ func main() {
 	})
 	mux.HandleFunc("/fixture-api/download", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write([]byte("fixture\x00download\n"))
+		_, _ = w.Write([]byte("fixture\x00\xff\x80download\n"))
 	})
+	mux.HandleFunc("/fixture-api/upload", fixtureUpload)
 	mux.Handle("/", router)
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
 	log.Fatal(server.Serve(listener))
+}
+
+func fixtureUpload(w http.ResponseWriter, r *http.Request) {
+	const maxUploadBytes = 1024 * 1024
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+
+	reader, err := r.MultipartReader()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+
+		return
+	}
+
+	var caption, filename string
+
+	var attachment []byte
+
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		body, err := io.ReadAll(part)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+
+			return
+		}
+
+		switch part.FormName() {
+		case "caption":
+			caption = string(body)
+		case "attachment":
+			filename, attachment = part.FileName(), body
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"caption": caption, "filename": filename, "body": attachment,
+	}); err != nil {
+		log.Print(err)
+	}
 }

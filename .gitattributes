@@ -10,3 +10,7 @@
 Makefile* text eol=lf
 Dockerfile* text eol=lf
 *.go text eol=lf
+
+assets/static/browser/** linguist-generated=true
+# Bundled language grammars contain significant whitespace in template literals.
+assets/static/browser/browser.js whitespace=-blank-at-eol

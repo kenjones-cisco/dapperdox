@@ -9,7 +9,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 COPY package.json package-lock.json /opt/browser-tests/
 RUN cd /opt/browser-tests && npm ci \
-    && npx playwright install --with-deps chromium
+    && npx playwright install --with-deps chromium firefox webkit
 ENV NODE_PATH=/opt/browser-tests/node_modules
 ENV PATH="/opt/browser-tests/node_modules/.bin:${PATH}"
 
