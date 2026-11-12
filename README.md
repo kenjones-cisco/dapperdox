@@ -139,6 +139,8 @@ fragment instead of legacy/CDN scripts. Keep the existing explorer IDs and
 `apiExplorer.setBeforeSendCallback` contract. The removed wiggle plugin is
 replaced by focusing invalid fields; native object-URL downloads replace
 FileSaver. Explorer responses are read as bytes, preserving non-UTF-8 downloads.
+Displayed text honors the response's declared charset (UTF-8 when absent);
+unsupported encodings appear in the existing explorer error display.
 
 This migration changes layout spacing and responsive behavior, not guide URLs,
 server-side Markdown or authentication APIs. Consumer overrides must adopt it

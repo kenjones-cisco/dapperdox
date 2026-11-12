@@ -101,9 +101,6 @@ var _procMime = function( types, loc ) {
 var _process = function(text, status, xhr, fullhost) {
     var content = xhr.getResponseHeader('Content-Type');
     var responseBytes = text instanceof ArrayBuffer ? text : null;
-    if (responseBytes) {
-        text = new TextDecoder().decode(responseBytes);
-    }
 
     // Clean up previously opened result blocks
     $('#html_block').hide();
@@ -122,6 +119,12 @@ var _process = function(text, status, xhr, fullhost) {
         }
         else
         {
+            if (responseBytes && /json|xml|yaml|html|text\/plain/.test(content)) {
+                var charset = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;\s]*))/i.exec(content);
+                var encoding = charset ? (charset[1] || charset[2] || charset[3]) : "utf-8";
+                text = new TextDecoder(encoding || "utf-8").decode(responseBytes);
+            }
+
             if( content.match(/json/) ) 
             {
                 $('#body_block').show();

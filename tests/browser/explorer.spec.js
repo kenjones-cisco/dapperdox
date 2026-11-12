@@ -96,6 +96,36 @@ test('HTTP errors still render the response and re-enable the explorer', async (
   await expect(page.locator('#exploreButton')).not.toHaveAttribute('disabled');
 });
 
+test('text responses honor their declared charset', async ({ page }) => {
+  await open(page, 'query-pet');
+  for (const [contentType, body, text, status = 200] of [
+    ['text/plain; charset=windows-1252', Buffer.from([0x63, 0x61, 0x66, 0xe9]), 'café'],
+    ['text/plain; Charset = "windows-1252"', Buffer.from([0x80]), '€', 422],
+    ["application/json; charset='windows-1252'", Buffer.from('{"name":"caf\xe9"}', 'latin1'), '{\n  "name": "café"\n}'],
+    ['application/xml; charset=utf-16le', Buffer.from('<name>café</name>', 'utf16le'), '<name>café</name>'],
+    ['application/yaml; charset=windows-1252', Buffer.from('name: caf\xe9', 'latin1'), 'name: café'],
+    ['text/plain', Buffer.from('café'), 'café'],
+  ]) {
+    await page.route('**/fixture-api/query*', route => route.fulfill({ contentType, body, status }));
+    await page.locator('#exploreButton').click();
+    await expect(page.locator('#response_body')).toHaveText(text);
+    await expect(page.locator('#response_code')).toContainText(String(status));
+    await expect(page.locator('#exploreButton')).not.toHaveAttribute('disabled');
+    await page.unroute('**/fixture-api/query*');
+  }
+});
+
+test('unsupported text encodings show an error without disabling the explorer', async ({ page }) => {
+  await open(page, 'query-pet');
+  await page.route('**/fixture-api/query*', route => route.fulfill({
+    contentType: 'text/plain; charset=unsupported-encoding', body: Buffer.from([0xe9]),
+  }));
+  await page.locator('#exploreButton').click();
+  await expect(page.locator('#response_body')).toContainText('Unexpected error:');
+  await expect(page.locator('#response_code')).toContainText('200');
+  await expect(page.locator('#exploreButton')).not.toHaveAttribute('disabled');
+});
+
 test('response highlighting supports JSON, XML, YAML and HTTP headers', async ({ page }) => {
   await open(page, 'query-pet');
   for (const [mime, body, text] of [
