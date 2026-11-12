@@ -120,8 +120,7 @@ func TestDocumentationCompatibility(t *testing.T) {
 		{"missing path CORS", http.MethodGet, "/missing", "https://client.example", http.StatusNotFound, "", "Page not found", "", false},
 		{"prefix without segment boundary", http.MethodGet, "/_proxysuffix?q=1", "", http.StatusOK, "", "GET /_proxysuffix?q=1", "", true},
 		{"proxy HEAD", http.MethodHead, "/_proxy", "", http.StatusOK, "", "", "", true},
-		// Characterize the existing error-template failure, not the intended 400.
-		{"CSRF failure", http.MethodPost, "/_proxy", "", http.StatusInternalServerError, "", "Unable to render documentation", "", false},
+		{"CSRF failure", http.MethodPost, "/_proxy", "", http.StatusBadRequest, "", "<h1>400 - ", "", false},
 		{"proxy preflight", http.MethodOptions, "/_proxy", "https://client.example", http.StatusOK, "", "", "https://client.example", true},
 		{"health bypasses middleware", http.MethodPost, "/healthz", "", http.StatusOK, "", "", "", false},
 		{"readiness bypasses middleware", http.MethodHead, "/readyz", "", http.StatusOK, "", "", "", false},
