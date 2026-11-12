@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/gorilla/handlers"
@@ -71,20 +72,15 @@ func NewRouterChainWithConfig(settings config.Settings) (http.Handler, error) {
 	}), nil
 }
 
-func createMiddlewareRouter(renderer *render.Context, settings config.Settings) *mux.Router {
-	router := mux.NewRouter()
-	router.Use(
+func middleware(renderer *render.Context, settings config.Settings) []mux.MiddlewareFunc {
+	return []mux.MiddlewareFunc{
 		handlers.RecoveryHandler(handlers.RecoveryLogger(recoveryLogger{}), handlers.PrintRecoveryStack(true)),
 		withLogger,
 		func(h http.Handler) http.Handler { return timeoutHandler(renderer, h) },
 		func(h http.Handler) http.Handler { return withCsrf(renderer, h) },
 		func(h http.Handler) http.Handler { return injectHeadersWithConfig(h, settings) },
 		handlers.CORS(handlers.AllowedOrigins(settings.AllowOrigin)),
-	)
-
-	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
-
-	return router
+	}
 }
 
 type recoveryLogger struct{}
@@ -99,7 +95,8 @@ func buildGenerationWithConfig(suite *spec.Suite, raw map[string][]byte, catalog
 		return nil, err
 	}
 
-	router := createMiddlewareRouter(renderer, settings)
+	router := mux.NewRouter()
+	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
 
 	err = specs.RegisterWithConfig(router, raw, settings)
 	if err != nil {
@@ -117,10 +114,17 @@ func buildGenerationWithConfig(suite *spec.Suite, raw map[string][]byte, catalog
 	home.RegisterWithConfig(router, renderer, settings)
 	proxy.RegisterWithConfig(router, settings)
 
+	return finalizeRouter(router, middleware(renderer, settings)...)
+}
+
+// finalizeRouter validates and compiles matched-route middleware before publication.
+// Router.Use rebuilds the chain on every request; wrapping routes here also keeps
+// redirects, 404s and 405s outside the middleware, as before.
+func finalizeRouter(router *mux.Router, middlewares ...mux.MiddlewareFunc) (*generation, error) {
 	count := 0
 	paths := make(map[string]bool)
 
-	err = router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+	err := router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
 		if routeErr := route.GetError(); routeErr != nil {
 			return routeErr
 		}
@@ -136,6 +140,13 @@ func buildGenerationWithConfig(suite *spec.Suite, raw map[string][]byte, catalog
 
 		paths[path] = true
 		count++
+
+		handler := route.GetHandler()
+		for _, wrap := range slices.Backward(middlewares) {
+			handler = wrap(handler)
+		}
+
+		route.Handler(handler)
 
 		return nil
 	})

@@ -40,6 +40,7 @@ func NewTask(handler Handler, obj any, event models.Event) Task {
 
 type queueImpl struct {
 	queue   []Task
+	ready   chan struct{}
 	delay   time.Duration
 	lock    sync.Mutex
 	active  bool
@@ -49,10 +50,8 @@ type queueImpl struct {
 // NewQueue instantiates a queue with a processing function.
 func NewQueue(errorDelay time.Duration) Queue {
 	return &queueImpl{
-		delay:   errorDelay,
-		queue:   make([]Task, 0),
-		closing: false,
-		lock:    sync.Mutex{},
+		delay: errorDelay,
+		ready: make(chan struct{}, 1),
 	}
 }
 
@@ -61,6 +60,11 @@ func (q *queueImpl) Push(item Task) {
 
 	if !q.closing {
 		q.queue = append(q.queue, item)
+		// Only wake-ups coalesce; every task remains in the FIFO.
+		select {
+		case q.ready <- struct{}{}:
+		default:
+		}
 	}
 
 	q.lock.Unlock()
@@ -72,13 +76,10 @@ func (q *queueImpl) Run(stop <-chan struct{}) {
 	defer rateLimiter.Stop()
 	defer q.finish()
 
-	var item Task
-
 	for {
-		select {
-		case <-stop:
+		item, ok := q.next(stop)
+		if !ok {
 			return
-		default:
 		}
 
 		rateLimiter.Accept()
@@ -89,27 +90,13 @@ func (q *queueImpl) Run(stop <-chan struct{}) {
 		default:
 		}
 
-		q.lock.Lock()
-
-		if q.closing {
-			q.lock.Unlock()
-
+		if !q.runTask(item, stop) {
 			return
-		} else if len(q.queue) == 0 {
-			q.lock.Unlock()
-		} else {
-			item, q.queue = q.queue[0], q.queue[1:]
-			q.active = true
-			q.lock.Unlock()
-
-			if !q.runTask(item, stop) {
-				return
-			}
-
-			q.lock.Lock()
-			q.active = false
-			q.lock.Unlock()
 		}
+
+		q.lock.Lock()
+		q.active = false
+		q.lock.Unlock()
 	}
 }
 
@@ -120,12 +107,52 @@ func (q *queueImpl) Idle() bool {
 	return len(q.queue) == 0 && !q.active
 }
 
+func (q *queueImpl) next(stop <-chan struct{}) (Task, bool) {
+	for {
+		select {
+		case <-stop:
+			return Task{}, false
+		default:
+		}
+
+		q.lock.Lock()
+		if q.closing {
+			q.lock.Unlock()
+
+			return Task{}, false
+		}
+
+		if len(q.queue) > 0 {
+			item := q.queue[0]
+			q.queue[0] = Task{}
+
+			q.queue = q.queue[1:]
+			if len(q.queue) == 0 {
+				q.queue = nil
+			}
+
+			q.active = true
+			q.lock.Unlock()
+
+			return item, true
+		}
+		q.lock.Unlock()
+
+		select {
+		case <-stop:
+			return Task{}, false
+		case <-q.ready:
+		}
+	}
+}
+
 func (q *queueImpl) finish() {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
 	q.active = false
 	q.closing = true
+	q.queue = nil
 }
 
 func (q *queueImpl) runTask(item Task, stop <-chan struct{}) bool {
