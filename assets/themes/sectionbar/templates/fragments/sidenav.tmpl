@@ -19,17 +19,17 @@ $(document).ready(function(){
     var outerul = $("#ul"+api_id);
 
     //outerul.removeClass('collapse');
-    outerul.addClass('in');
+    outerul.addClass('show');
     toggler.addClass('open');
     toggler.removeClass('collapsed');
     $element.addClass('nav-selected');
 
-    $parent.removeClass('hide');
+    $parent.removeClass('d-none');
 });
 </script>
 
 <div class="side-nav affix">
-    <ul class="nav nav-sidebar hide" id="navigation">
+    <ul class="nav nav-sidebar d-none" id="navigation">
         [: if .Guide :]
             [: template "fragments/sidenav_guides" . :]
         [: else :]

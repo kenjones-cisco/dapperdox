@@ -22,6 +22,8 @@ help:
 	@echo '    check           Run static code analysis (lint).'
 	@echo '    test            Run tests on project.'
 	@echo '    test-browser    Run explorer compatibility tests in Docker.'
+	@echo '    browser-assets  Generate locked self-hosted browser assets in Docker.'
+	@echo '    check-browser-assets  Verify generated browser assets are reproducible.'
 	@echo '    cover           Run tests and capture code coverage metrics on project.'
 	@echo '    clean           Clean the directory tree of produced artifacts.'
 	@echo '    veryclean       Same as clean but also removes cached dependencies.'
@@ -121,6 +123,13 @@ race: check
 .PHONY: test-browser
 test-browser: prepare
 	${DOCKERRUN} npm run test:browser
+
+.PHONY: browser-assets check-browser-assets
+browser-assets: prepare
+	${DOCKERRUN} npm run build:assets
+
+check-browser-assets: prepare
+	${DOCKERRUN} npm run check:assets
 
 ## Run tests and capture code coverage metrics on project.
 cover: check

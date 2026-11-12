@@ -83,23 +83,67 @@ Run the browser fixtures with Docker:
 make test-browser
 ```
 
-The development image installs Node, pinned Playwright/Chromium, and test-only
-jQuery; no host npm install or browser installation is needed. The browser
-suite starts a local documentation/API fixture server, intercepts external
-assets, and exercises the production explorer scripts and rendered templates.
+The development image installs Node and pinned Playwright Chromium, Firefox
+and WebKit. It also exercises mobile Safari emulation; no host npm or browser
+installation is needed. The suite starts a local documentation/API fixture
+server and exercises the actual self-hosted scripts, styles, fonts and templates.
 It covers authentication hooks, header/query API keys, Basic/Bearer precedence,
-JSON bodies, multipart uploads, and downloads. Download coverage preserves the
-existing ASCII-plus-NUL fixture, not arbitrary binary correctness.
+JSON bodies, server-received multipart bytes, binary downloads (including NUL
+and non-UTF-8 bytes), response highlighting, HTTP errors, and navigation.
+Offline page checks reject external asset requests and JavaScript errors.
 
-The pinned legacy jQuery matches the application's existing CDN version for
-compatibility testing; it is not a production dependency upgrade and retains
-known advisories. HTTPS assets are intercepted, so the browser tests do not
-contact third-party CDNs. The fixture normalizes the `.js` MIME type to avoid
-depending on the container's MIME database.
+Set `BROWSER_TEST_THEME=sectionbar` to test the other built-in theme. For consumer
+integration, mount the consuming repository's assets and set
+`BROWSER_TEST_ASSETS` to their container path and `BROWSER_TEST_THEME=cisco`.
+`BROWSER_SCREENSHOTS` saves desktop/mobile evidence to a mounted directory.
+`BROWSER_TEST_CONTRACTS` can point at captured guide DOM contracts to compare
+heading targets, links, images and code text before and after a migration.
+If pinned consumer content has pre-existing missing assets, list their exact
+URL paths in `BROWSER_TEST_EXPECTED_404` (newline-delimited). The suite requires
+exactly those 404s; without that setting every failed asset request fails.
+JavaScript and webfont MIME types are set by the production static handler,
+independently of the image's MIME database.
 
 Go HTTP fixtures in [handlers/compatibility_test.go](handlers/compatibility_test.go)
 protect public URLs, redirects, heading anchors, Markdown guides, section-overlay
 precedence, explorer markup, and specification downloads.
+
+### Browser assets
+
+The supported browser floor is the current and previous stable major releases
+of Chrome, Edge, Firefox and Safari, including mobile Safari; Internet Explorer
+is not supported. Playwright engine tests and mobile emulation are not a
+substitute for release qualification on branded browsers and real iOS devices.
+
+All built-in scripts, styles, icons and Open Sans fonts are self-hosted.
+`package-lock.json` pins jQuery 4.0.0, Bootstrap 5.3.9, Highlight.js 11.12.0,
+Font Awesome Free 7.3.1 and Open Sans 5.3.0. No production Node process or CDN
+is needed. The image packages defaults at `/opt/dapperdox/assets` and sets
+`DEFAULT_ASSETS_DIR` accordingly. Set `ASSETS_DIR` to the consuming repository's
+assets directory so custom guides, themes and authentication hooks override the
+packaged defaults.
+
+Generate and verify committed distributions and license notices in Docker:
+
+```bash
+make browser-assets
+make check-browser-assets
+```
+
+The source bundle is `scripts/browser.js`; its generator copies the locked
+styles, font files and upstream licenses to `assets/static/browser`.
+Bootstrap 5 navigation uses `data-bs-toggle`/`data-bs-target` and the `show`
+collapse class. Custom layouts must use `/browser/browser.js`,
+`/browser/bootstrap.css`, `/browser/highlight.css` and the built-in fonts
+fragment instead of legacy/CDN scripts. Keep the existing explorer IDs and
+`apiExplorer.setBeforeSendCallback` contract. The removed wiggle plugin is
+replaced by focusing invalid fields; native object-URL downloads replace
+FileSaver. Explorer responses are read as bytes, preserving non-UTF-8 downloads.
+
+This migration changes layout spacing and responsive behavior, not guide URLs,
+server-side Markdown or authentication APIs. Consumer overrides must adopt it
+with the matching image. Roll back the consuming image and assets together.
+The browser migration can be reverted independently of the Markdown engine.
 
 ### Markdown rendering
 

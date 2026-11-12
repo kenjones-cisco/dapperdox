@@ -31,11 +31,6 @@ html {
 		min-height: 100%;
 }
 
-.glyphicon {
-		width: 14px;
-		height: 14px;
-}
-
 h1,
 h2,
 h3,
@@ -85,7 +80,6 @@ h1,
 
 .navbar {
 	background: #297A4A;
-    display: inline;
 }
 .navbar a.navbar-brand {
 	color: white;
@@ -189,10 +183,6 @@ h1,
  * Top navigation
  * Hide default border to remove 1px line.
  */
-.navbar-fixed-top {
-	border: 0;
-}
-
 /*
  * Sidebar
  */
@@ -395,10 +385,97 @@ blockquote {
 }
 
 td > input {
-    min-width: 300px;
+    min-width: min(300px, 100%);
 }
 
 .mime-group {
     display: none;
 }
 
+/* Preserve the documentation layout while using Bootstrap 5 components. */
+.navbar > .container-fluid {
+    display: block;
+}
+.footer > .row {
+    margin: 0;
+}
+.navbar .navbar-collapse {
+    flex-wrap: wrap;
+}
+.navbar-nav a {
+    display: block;
+    padding: .5rem;
+}
+.navbar-section {
+    flex-basis: 100%;
+}
+.nav-sidebar, .nav-inner {
+    display: block;
+}
+.nav-sidebar a {
+    display: inline-block;
+    overflow-wrap: anywhere;
+}
+.side-nav.affix {
+    position: sticky;
+    top: 90px;
+    width: auto;
+}
+.nav-pills {
+    padding-left: 0;
+}
+.nav-pills li {
+    list-style: none;
+}
+pre {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #f5f5f5;
+}
+pre code.hljs {
+    padding: 0;
+    background: transparent;
+}
+blockquote {
+    border-left: 5px solid #eee;
+    padding: 10px 20px;
+}
+a {
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+.has-error .form-control {
+    border-color: #a94442;
+}
+.table-responsive {
+    max-width: 100%;
+}
+.main {
+    min-width: 0;
+}
+.main img {
+    max-width: 100%;
+    height: auto;
+}
+.main > table {
+    display: block;
+    overflow-x: auto;
+}
+@media (max-width: 767px) {
+    .side-nav.affix {
+        position: static;
+    }
+    .navbar-collapse {
+        max-height: 65vh;
+        overflow-y: auto;
+    }
+    td > input {
+        min-width: 140px;
+    }
+    .nav-toggle {
+        margin-left: 0;
+    }
+}
