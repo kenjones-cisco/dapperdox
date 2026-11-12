@@ -102,7 +102,7 @@ func TestMiddlewareCSRFTokenAcrossRoutes(t *testing.T) {
 	for range 3 {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/submit/upload", http.NoBody)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
-		req.Header.Set("X-CSRF-Token", page.Body.String())
+		req.Header.Set("X-Csrf-Token", page.Body.String())
 
 		for _, cookie := range page.Result().Cookies() {
 			req.AddCookie(cookie)
