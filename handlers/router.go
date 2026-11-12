@@ -166,7 +166,7 @@ func withCsrf(renderer *render.Context, h http.Handler) http.Handler {
 	csrfHandler.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		rsn := nosurf.Reason(req).Error()
 		log.Logger().WarnContext(req.Context(), fmt.Sprintf("failed csrf validation: %s", rsn))
-		renderer.HTML(w, http.StatusBadRequest, "error", map[string]any{"error": rsn})
+		renderer.HTML(w, http.StatusBadRequest, "error", map[string]any{"error": rsn, "code": http.StatusBadRequest})
 	}))
 
 	return csrfHandler
@@ -175,7 +175,7 @@ func withCsrf(renderer *render.Context, h http.Handler) http.Handler {
 func timeoutHandler(renderer *render.Context, h http.Handler) http.Handler {
 	return timeout.Handler(h, 1*time.Second, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		log.Logger().WarnContext(req.Context(), "request timed out")
-		renderer.HTML(w, http.StatusRequestTimeout, "error", map[string]any{"error": "Request timed out"})
+		renderer.HTML(w, http.StatusRequestTimeout, "error", map[string]any{"error": "Request timed out", "code": http.StatusRequestTimeout})
 	}))
 }
 

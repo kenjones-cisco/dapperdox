@@ -129,9 +129,10 @@ The existing queue interface and readiness/active-work tracking are unchanged.
 HTTP characterization tests cover method matching, redirects, escaped paths,
 prefix precedence, CORS, CSRF and probe bypasses. Queue tests cover duplicate
 events, concurrent producers, retries, rate limiting, idle wake-up and shutdown.
-This compatibility pass does not fix a pre-existing error-page defect: with the
-built-in theme, CSRF rejection renders a 500 because its binding lacks the error
-template's status code, rather than the intended 400.
+CSRF rejection renders an HTML 400 error page without invoking the protected
+handler. Requests that time out before committing a response render an HTML 408
+error page and cancel the protected handler's context. Both error pages include
+the status code required by the theme's error template.
 
 ### Browser assets
 

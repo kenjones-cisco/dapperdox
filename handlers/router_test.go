@@ -5,13 +5,80 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/justinas/nosurf"
 
 	"github.com/kenjones-cisco/dapperdox/config"
+	"github.com/kenjones-cisco/dapperdox/render"
+	"github.com/kenjones-cisco/dapperdox/render/asset"
+	"github.com/kenjones-cisco/dapperdox/spec"
 )
+
+func TestMiddlewareErrorPages(t *testing.T) {
+	for _, theme := range []string{"default", "sectionbar"} {
+		t.Run(theme, func(t *testing.T) {
+			settings := config.Settings{DefaultAssetsDir: "../assets", Theme: theme}
+
+			catalog, err := asset.NewCatalogWithConfig(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			renderer, err := render.NewWithConfig(&spec.Suite{}, catalog, settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			t.Run("CSRF rejection", func(t *testing.T) {
+				called := false
+				handler := withCsrf(renderer, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+					called = true
+				}))
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", http.NoBody)
+				req.Header.Set("Sec-Fetch-Site", "same-origin")
+
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, req)
+
+				if called {
+					t.Fatal("CSRF rejection reached protected handler")
+				}
+
+				if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "<h1>400 - ") {
+					t.Fatalf("CSRF response = %d %q", response.Code, response.Body.String())
+				}
+			})
+
+			t.Run("timeout", func(t *testing.T) {
+				finished := make(chan struct{})
+				handler := timeoutHandler(renderer, http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+					<-req.Context().Done()
+					close(finished)
+				}))
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", http.NoBody))
+
+				select {
+				case <-finished:
+				case <-time.After(time.Second):
+					t.Fatal("timeout did not cancel protected handler")
+				}
+
+				if response.Code != http.StatusRequestTimeout || !strings.Contains(response.Body.String(), "<h1>408 - Request timed out</h1>") {
+					t.Fatalf("timeout response = %d %q", response.Code, response.Body.String())
+				}
+
+				if response.Header().Get("Content-Type") != "text/html; charset=UTF-8" || response.Header().Get("Cache-Control") != "no-store" {
+					t.Fatalf("timeout error-page headers = %v", response.Header())
+				}
+			})
+		})
+	}
+}
 
 func TestMiddlewareCSRFTokenAcrossRoutes(t *testing.T) {
 	router := mux.NewRouter()
