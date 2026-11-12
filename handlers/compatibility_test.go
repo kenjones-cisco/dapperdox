@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,14 @@ func TestDocumentationCompatibility(t *testing.T) {
 
 	settings := config.Snapshot()
 	settings.TLSCert, settings.TLSKey = "fixture-cert", "fixture-key"
+	settings.AllowOrigin = []string{"https://client.example"}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(w, req.Method+" "+req.URL.RequestURI())
+	}))
+	t.Cleanup(upstream.Close)
+	settings.ProxyPath = map[string]string{"/_proxy": upstream.URL}
 
 	router, err := handlers.NewRouterChainWithConfig(settings)
 	if err != nil {
@@ -89,6 +98,59 @@ func TestDocumentationCompatibility(t *testing.T) {
 
 			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != file.contentType || response.Body.Len() == 0 || !strings.HasPrefix(response.Body.String(), file.signature) {
 				t.Fatalf("asset not served with valid bytes and MIME type: status=%d type=%q", response.Code, response.Header().Get("Content-Type"))
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name, method, path, origin  string
+		status                      int
+		location, body, allowOrigin string
+		protected                   bool
+	}{
+		{"GET-only HEAD", http.MethodHead, "/swagger.json", "", http.StatusMethodNotAllowed, "", "", "", false},
+		{"GET-only POST", http.MethodPost, "/swagger.json", "", http.StatusMethodNotAllowed, "", "", "", false},
+		{"GET-only OPTIONS", http.MethodOptions, "/swagger.json", "", http.StatusMethodNotAllowed, "", "", "", false},
+		{"trailing slash", http.MethodGet, "/swagger.json/", "", http.StatusNotFound, "", "Page not found", "", false},
+		{"path cleaning", http.MethodGet, "/guides//overview?v=1", "", http.StatusMovedPermanently, "/guides/overview?v=1", "", "", false},
+		{"escaped path", http.MethodGet, "/guides/%6fverview", "", http.StatusOK, "", "rendered guide", "", true},
+		{"escaped slash", http.MethodGet, "/guides%2foverview", "", http.StatusOK, "", "rendered guide", "", true},
+		{"allowed CORS", http.MethodGet, "/swagger.json", "https://client.example", http.StatusOK, "", "", "https://client.example", true},
+		{"disallowed CORS", http.MethodGet, "/swagger.json", "https://other.example", http.StatusOK, "", "", "", true},
+		{"missing path CORS", http.MethodGet, "/missing", "https://client.example", http.StatusNotFound, "", "Page not found", "", false},
+		{"prefix without segment boundary", http.MethodGet, "/_proxysuffix?q=1", "", http.StatusOK, "", "GET /_proxysuffix?q=1", "", true},
+		{"proxy HEAD", http.MethodHead, "/_proxy", "", http.StatusOK, "", "", "", true},
+		// Characterize the existing error-template failure, not the intended 400.
+		{"CSRF failure", http.MethodPost, "/_proxy", "", http.StatusInternalServerError, "", "Unable to render documentation", "", false},
+		{"proxy preflight", http.MethodOptions, "/_proxy", "https://client.example", http.StatusOK, "", "", "https://client.example", true},
+		{"health bypasses middleware", http.MethodPost, "/healthz", "", http.StatusOK, "", "", "", false},
+		{"readiness bypasses middleware", http.MethodHead, "/readyz", "", http.StatusOK, "", "", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(t.Context(), test.method, test.path, http.NoBody)
+			req.Header.Set("Origin", test.origin)
+
+			if test.method == http.MethodOptions {
+				req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+			}
+
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, req)
+
+			if response.Code != test.status || response.Header().Get("Location") != test.location {
+				t.Fatalf("status/location = %d %q, want %d %q", response.Code, response.Header().Get("Location"), test.status, test.location)
+			}
+
+			if !strings.Contains(response.Body.String(), test.body) {
+				t.Errorf("body missing %q: %s", test.body, response.Body.String())
+			}
+
+			if got := response.Header().Get("Access-Control-Allow-Origin"); got != test.allowOrigin {
+				t.Errorf("CORS origin = %q, want %q", got, test.allowOrigin)
+			}
+
+			if got := response.Header().Get("Server") != ""; got != test.protected {
+				t.Errorf("server header present = %t, want %t", got, test.protected)
 			}
 		})
 	}

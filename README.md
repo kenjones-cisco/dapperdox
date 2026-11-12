@@ -108,6 +108,31 @@ Go HTTP fixtures in [handlers/compatibility_test.go](handlers/compatibility_test
 protect public URLs, redirects, heading anchors, Markdown guides, section-overlay
 precedence, explorer markup, and specification downloads.
 
+### Routing, middleware and discovery queue
+
+Documentation generations validate duplicate/invalid routes and compile the
+middleware chain once per route before publication. Gorilla matching is retained:
+GET-only routes still reject HEAD, proxy prefixes are not segment-boundary
+matches, and path-cleaning redirects, 404s and 405s bypass middleware. Recovery,
+combined request logging, the one-second timeout, CSRF, response headers and CORS
+retain their existing order. The custom timeout is retained because it preserves
+already-committed responses rather than buffering them like `http.TimeoutHandler`.
+
+The discovery queue sleeps until work arrives instead of polling. It remains a
+single-worker, non-coalescing FIFO: an unsuccessful task retries at the configured
+delay before later tasks run, and the complete handler chain restarts on retry.
+Processing remains limited to 10 tasks/second with a 100-task burst; idle waits no
+longer consume tokens. Shutdown interrupts idle/retry waits, rejects future work
+and releases pending objects. Completed task slots are cleared immediately.
+The existing queue interface and readiness/active-work tracking are unchanged.
+
+HTTP characterization tests cover method matching, redirects, escaped paths,
+prefix precedence, CORS, CSRF and probe bypasses. Queue tests cover duplicate
+events, concurrent producers, retries, rate limiting, idle wake-up and shutdown.
+This compatibility pass does not fix a pre-existing error-page defect: with the
+built-in theme, CSRF rejection renders a 500 because its binding lacks the error
+template's status code, rather than the intended 400.
+
 ### Browser assets
 
 The supported browser floor is the current and previous stable major releases

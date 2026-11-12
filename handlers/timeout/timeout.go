@@ -32,11 +32,9 @@ import (
 // Handler returns a Handler that runs h with the given time limit.
 //
 // The new Handler calls h.ServeHTTP to handle each request, but if a
-// call runs for longer than its time limit, the handler responds with
-// a 503 Service Unavailable error and the given message in its body.
-// (If msg is empty, a suitable default message will be sent.)
-// After such a timeout, writes by h to its ResponseWriter will return
-// error.
+// call runs for longer than its time limit, fh handles the response unless h
+// has already started writing it. A timeout preserves any committed response
+// and cancels the request context. Later writes return http.ErrHandlerTimeout.
 func Handler(h http.Handler, dt time.Duration, fh http.Handler) http.Handler {
 	f := func() <-chan time.Time {
 		return time.After(dt)
